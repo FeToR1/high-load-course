@@ -5,10 +5,8 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.selects.select
-import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.BlockingRateLimiter
-import ru.quipy.common.utils.RateLimiter
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import java.time.Duration
 import java.util.*

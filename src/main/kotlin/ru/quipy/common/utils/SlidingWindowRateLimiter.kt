@@ -22,8 +22,8 @@ class SlidingWindowRateLimiter(
     private val sum = AtomicLong(0)
     private val queue = PriorityBlockingQueue<Measure>(10_000)
 
-    private val lock = ReentrantLock(true);
-    private val condition = lock.newCondition();
+    private val lock = ReentrantLock(true)
+    private val condition = lock.newCondition()
 
     override fun tick(): Boolean {
         while (true) {
