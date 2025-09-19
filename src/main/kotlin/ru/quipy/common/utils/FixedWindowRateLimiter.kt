@@ -15,11 +15,15 @@ interface RateLimiter {
     fun tick(): Boolean
 }
 
+interface BlockingRateLimiter : RateLimiter {
+    fun tickBlocking()
+}
+
 class FixedWindowRateLimiter(
     private val rate: Int,
     private val window: Long,
     private val timeUnit: TimeUnit = TimeUnit.MINUTES,
-): RateLimiter {
+): BlockingRateLimiter {
     companion object {
         private val logger: Logger = LoggerFactory.getLogger(FixedWindowRateLimiter::class.java)
         private val counter = AtomicInteger(0)
@@ -52,14 +56,14 @@ class FixedWindowRateLimiter(
 
     override fun tick() = semaphore.tryAcquire()
 
-    fun tickBlocking() = semaphore.acquire()
+    override fun tickBlocking() = semaphore.acquire()
 }
 
 class SlowStartRateLimiter(
     private val targetRate: Int,
     private val timeUnit: TimeUnit = TimeUnit.MINUTES,
     private val slowStartOn: Boolean = true,
-): RateLimiter {
+): BlockingRateLimiter {
     companion object {
         private val logger: Logger = LoggerFactory.getLogger(SlowStartRateLimiter::class.java)
         private val counter = AtomicInteger(0)
@@ -101,7 +105,7 @@ class SlowStartRateLimiter(
 
     override fun tick() = semaphore.tryAcquire()
 
-    fun tickBlocking() = semaphore.acquire()
+    override fun tickBlocking() = semaphore.acquire()
 }
 
 class CountingRateLimiter(
