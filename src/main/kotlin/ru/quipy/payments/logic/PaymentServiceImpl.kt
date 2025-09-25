@@ -15,7 +15,7 @@ import java.util.*
 import java.util.concurrent.Executors
 
 class AccountProvider(
-    private val paymentAccounts: List<PaymentExternalSystemAdapter>
+    val paymentAccounts: List<PaymentExternalSystemAdapter>
 ) {
     private val queueScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
 
@@ -24,7 +24,7 @@ class AccountProvider(
         { SlidingWindowRateLimiter(it.rateLimitPerSec().toLong(), Duration.ofSeconds(1)) }
     )
 
-    private val ongoingWindows: Map<String, OngoingWindow> = paymentAccounts.associateBy(
+    val ongoingWindows: Map<String, OngoingWindow> = paymentAccounts.associateBy(
         { it.name() },
         { OngoingWindow(it.parallelRequests()) }
     )
@@ -34,15 +34,9 @@ class AccountProvider(
         return runBlocking {
             select {
                 paymentAccounts.forEach { account ->
-                    val ongoingWindow = ongoingWindows.getValue(account.name())
                     queueScope.async {
-                        ongoingWindow.acquire()
-                        try {
-                            rateLimiters.getValue(account.name()).tickBlocking()
-                            return@async account
-                        } finally {
-                            ongoingWindow.release()
-                        }
+                        rateLimiters.getValue(account.name()).tickBlocking()
+                        return@async account
                     }.onAwait { it }
                 }
             }
@@ -57,6 +51,16 @@ class PaymentSystemImpl(
     private val accountProvider = AccountProvider(paymentAccounts)
 
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        accountProvider.acquire().performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
+        accountProvider.paymentAccounts.forEach { account ->
+            val ongoingWindow = accountProvider.ongoingWindows.getValue(account.name())
+            try {
+                ongoingWindow.acquire()
+                accountProvider.acquire().performPaymentAsync(paymentId, amount, paymentStartedAt, deadline)
+            } finally {
+                ongoingWindow.release()
+            }
+
+        }
+
     }
 }
