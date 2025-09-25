@@ -7,6 +7,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.selects.select
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.BlockingRateLimiter
+import ru.quipy.common.utils.NonBlockingOngoingWindow
+import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import java.time.Duration
 import java.util.*
@@ -22,14 +24,25 @@ class AccountProvider(
         { SlidingWindowRateLimiter(it.rateLimitPerSec().toLong(), Duration.ofSeconds(1)) }
     )
 
+    private val ongoingWindows: Map<String, OngoingWindow> = paymentAccounts.associateBy(
+        { it.name() },
+        { OngoingWindow(it.parallelRequests()) }
+    )
+
     fun acquire(): PaymentExternalSystemAdapter {
         // TODO: make this function fair
         return runBlocking {
             select {
                 paymentAccounts.forEach { account ->
+                    val ongoingWindow = ongoingWindows.getValue(account.name())
                     queueScope.async {
-                        rateLimiters.getValue(account.name()).tickBlocking()
-                        return@async account
+                        ongoingWindow.acquire()
+                        try {
+                            rateLimiters.getValue(account.name()).tickBlocking()
+                            return@async account
+                        } finally {
+                            ongoingWindow.release()
+                        }
                     }.onAwait { it }
                 }
             }
