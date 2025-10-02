@@ -35,7 +35,6 @@ class APIController {
 
     @PostMapping("/orders")
     fun createOrder(@RequestParam userId: UUID, @RequestParam price: Int): Order {
-
         val order = Order(
             UUID.randomUUID(),
             userId,
@@ -43,10 +42,7 @@ class APIController {
             OrderStatus.COLLECTING,
             price,
         )
-
-        val savedOrder = orderRepository.save(order)
-
-        return savedOrder
+        return orderRepository.save(order)
     }
 
     data class Order(

@@ -2,7 +2,6 @@ package ru.quipy.monitoring
 
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.Metrics
-import io.micrometer.core.instrument.Timer
 import org.springframework.stereotype.Service
 
 enum class RequestType {

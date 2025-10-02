@@ -13,7 +13,6 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
-import kotlin.math.log
 
 
 // Advice: always treat time as a Duration
@@ -41,7 +40,6 @@ class PaymentExternalSystemAdapterImpl(
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         if (now() > deadline) {
-            logger.warn("Deadline exceeded")
             monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
             return
         }
@@ -83,7 +81,6 @@ class PaymentExternalSystemAdapterImpl(
                     it.logProcessing(body.result, now(), transactionId, reason = body.message)
                 }
             }
-
         } catch (e: Exception) {
             when (e) {
                 is SocketTimeoutException -> {
@@ -116,4 +113,4 @@ class PaymentExternalSystemAdapterImpl(
 
 }
 
-public fun now() = System.currentTimeMillis()
+fun now() = System.currentTimeMillis()
