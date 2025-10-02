@@ -44,6 +44,8 @@ class PaymentAccountsConfig {
 
         val resp = javaClient.send(request, HttpResponse.BodyHandlers.ofString())
 
+        increaseRequestsCounter("outgoing")
+
         println("\nPayment accounts list:")
         return mapper.readValue<List<PaymentAccountProperties>>(
             resp.body(),

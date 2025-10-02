@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.web.bind.annotation.*
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
+import ru.quipy.payments.logic.increaseRequestsCounter
 import java.util.*
 
 @RestController
@@ -30,6 +31,8 @@ class APIController {
 
     @PostMapping("/orders")
     fun createOrder(@RequestParam userId: UUID, @RequestParam price: Int): Order {
+        increaseRequestsCounter("incoming")
+
         val order = Order(
             UUID.randomUUID(),
             userId,
@@ -37,7 +40,12 @@ class APIController {
             OrderStatus.COLLECTING,
             price,
         )
-        return orderRepository.save(order)
+
+        val savedOrder = orderRepository.save(order)
+
+        increaseRequestsCounter("processed")
+
+        return savedOrder
     }
 
     data class Order(
@@ -56,12 +64,13 @@ class APIController {
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
+        increaseRequestsCounter("incoming")
+
         val paymentId = UUID.randomUUID()
         val order = orderRepository.findById(orderId)?.let {
             orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
             it
         } ?: throw IllegalArgumentException("No such order $orderId")
-
 
         val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
         return PaymentSubmissionDto(createdAt, paymentId)
