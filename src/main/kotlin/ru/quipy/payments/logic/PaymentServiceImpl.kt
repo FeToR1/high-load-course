@@ -10,7 +10,7 @@ class PaymentSystemImpl(
     private val accountProvider = AccountProvider(paymentAccounts)
 
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long): Boolean {
-        return accountProvider.withAccount(deadline) {
+        return accountProvider.withAccount(deadline - 2000) {
             it.performPayment(paymentId, amount, paymentStartedAt, deadline)
         }
     }

@@ -3,7 +3,10 @@ package ru.quipy.apigateway
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import org.springframework.web.client.HttpClientErrorException
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.orders.repository.OrderRepository
@@ -60,7 +63,7 @@ class APIController {
     }
 
     @PostMapping("/orders/{orderId}/payment")
-    fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
+    fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<PaymentSubmissionDto> {
         monitoringService.increaseRequestsCounter(RequestType.INCOMING)
 
         val paymentId = UUID.randomUUID()
@@ -69,12 +72,32 @@ class APIController {
             it
         } ?: throw IllegalArgumentException("No such order $orderId")
 
-        val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
-        return PaymentSubmissionDto(createdAt, paymentId)
+        try {
+            val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
+            return ResponseEntity.status(200)
+                .body(PaymentSubmissionDto(createdAt, paymentId))
+        } catch (_: HttpClientErrorException) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(null)
+        }
     }
 
     class PaymentSubmissionDto(
         val timestamp: Long,
         val transactionId: UUID
     )
+
+//    @ExceptionHandler(HttpClientErrorException::class)
+//    fun handleTooManyRequestsException(e: HttpClientErrorException): ResponseEntity<Any> {
+//        logger.warn("Too many requests: {}", e.message)
+//
+//        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+//            .body(
+//                mapOf(
+//                    "error" to "Too Many Requests",
+//                    "message" to "Rate limit exceeded. Please try again later.",
+//                    "timestamp" to Instant.now()
+//                )
+//            )
+//    }
 }
