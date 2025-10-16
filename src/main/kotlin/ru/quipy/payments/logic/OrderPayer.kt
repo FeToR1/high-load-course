@@ -9,6 +9,7 @@ import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.util.*
+import java.util.concurrent.Callable
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -38,7 +39,8 @@ class OrderPayer {
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
-        paymentExecutor.submit {
+        val ttl = deadline - createdAt
+        val task: Callable<Int> = {
             val createdEvent = paymentESService.create {
                 it.create(
                     paymentId,
@@ -49,7 +51,10 @@ class OrderPayer {
             logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+
+            return 1
         }
+        paymentExecutor.invokeAll(listOf(task), ttl)
         return createdAt
     }
 }

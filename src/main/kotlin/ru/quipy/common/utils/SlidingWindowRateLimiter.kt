@@ -7,6 +7,7 @@ import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.time.Duration
+import java.util.*
 import java.util.concurrent.Executors
 import java.util.concurrent.PriorityBlockingQueue
 import java.util.concurrent.atomic.AtomicLong
@@ -46,6 +47,22 @@ class SlidingWindowRateLimiter(
                 }
             }
         }
+    }
+
+    fun tickBlocking(deadline: Long): Boolean {
+        val date = Date(deadline)
+        lock.withLock {
+            while (!tick()) {
+                try {
+                    if (!condition.awaitUntil(date)) {
+                        return false
+                    }
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
+            }
+        }
+        return true
     }
 
     data class Measure(
