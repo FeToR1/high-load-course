@@ -3,13 +3,15 @@ package ru.quipy.payments.logic
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
+import org.springframework.web.client.HttpClientErrorException
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
 import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.util.*
-import java.util.concurrent.Callable
+import java.util.concurrent.Future
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -39,8 +41,7 @@ class OrderPayer {
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
-        val ttl = deadline - createdAt
-        val task: Callable<Int> = {
+        val task = {
             val createdEvent = paymentESService.create {
                 it.create(
                     paymentId,
@@ -48,13 +49,15 @@ class OrderPayer {
                     amount
                 )
             }
-            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+            logger.trace("Payment {} for order {} created.", createdEvent.paymentId, orderId)
 
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
-
-            return 1
         }
-        paymentExecutor.invokeAll(listOf(task), ttl)
-        return createdAt
+        val future: Future<Boolean> = paymentExecutor.submit(task)
+        if (future.get()) {
+            return createdAt
+        }
+
+        throw HttpClientErrorException(HttpStatus.TOO_MANY_REQUESTS)
     }
 }
