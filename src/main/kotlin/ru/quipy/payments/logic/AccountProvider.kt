@@ -5,6 +5,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.selects.select
+import org.testcontainers.shaded.org.bouncycastle.util.Objects
 import ru.quipy.common.utils.BlockingRateLimiter
 import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.SlidingWindowRateLimiter
@@ -46,7 +47,13 @@ class AccountProvider(
 }
 
 fun AccountProvider.withAccount(block: (PaymentExternalSystemAdapter) -> Unit) {
-    val account = acquire()
-    block.invoke(account)
-    release(account.name())
+    var account: PaymentExternalSystemAdapter? = null
+    try {
+        account = acquire()
+        block.invoke(account)
+    } finally {
+        if (!Objects.areEqual(account, null)) {
+            release(account!!.name())
+        }
+    }
 }
