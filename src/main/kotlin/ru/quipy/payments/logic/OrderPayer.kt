@@ -14,6 +14,7 @@ import java.util.*
 import java.util.concurrent.Future
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.RejectedExecutionHandler
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
@@ -37,7 +38,7 @@ class OrderPayer {
         TimeUnit.MILLISECONDS,
         LinkedBlockingQueue(320),
         NamedThreadFactory("payment-submission-executor"),
-        CallerBlockingRejectedExecutionHandler()
+        ThrowingDiscardOldestPolicy()
     )
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
@@ -54,11 +55,30 @@ class OrderPayer {
 
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         }
-        val future: Future<Boolean> = paymentExecutor.submit(task)
-        if (future.get()) {
-            return createdAt
+
+        try {
+            val future = paymentExecutor.submit(task)
+            if (future.get()) {
+                return createdAt
+            }
+        } catch (_: RejectedExecutionException) {
+            throw HttpClientErrorException(HttpStatus.TOO_MANY_REQUESTS, "Payment queue full")
         }
 
         throw HttpClientErrorException(HttpStatus.TOO_MANY_REQUESTS)
+    }
+}
+
+class ThrowingDiscardOldestPolicy : RejectedExecutionHandler {
+    override fun rejectedExecution(r: Runnable, executor: ThreadPoolExecutor) {
+        if (!executor.isShutdown) {
+            val removed = executor.queue.poll()
+            OrderPayer.logger.warn(
+                "Queue full — dropped oldest payment task: {}. Rejecting new task.",
+                removed?.javaClass?.simpleName ?: "unknown"
+            )
+        }
+
+        throw RejectedExecutionException("Payment queue full — rejecting new task.")
     }
 }
