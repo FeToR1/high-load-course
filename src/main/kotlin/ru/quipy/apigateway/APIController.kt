@@ -78,6 +78,7 @@ class APIController {
                 .body(PaymentSubmissionDto(createdAt, paymentId))
         } catch (_: HttpClientErrorException) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", "1000")
                 .body(null)
         }
     }
@@ -86,18 +87,4 @@ class APIController {
         val timestamp: Long,
         val transactionId: UUID
     )
-
-//    @ExceptionHandler(HttpClientErrorException::class)
-//    fun handleTooManyRequestsException(e: HttpClientErrorException): ResponseEntity<Any> {
-//        logger.warn("Too many requests: {}", e.message)
-//
-//        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-//            .body(
-//                mapOf(
-//                    "error" to "Too Many Requests",
-//                    "message" to "Rate limit exceeded. Please try again later.",
-//                    "timestamp" to Instant.now()
-//                )
-//            )
-//    }
 }
