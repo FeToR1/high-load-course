@@ -36,7 +36,7 @@ class OrderPayer {
         16,
         0L,
         TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(320),
+        LinkedBlockingQueue(300),
         NamedThreadFactory("payment-submission-executor"),
         ThrowingDiscardOldestPolicy()
     )
@@ -72,13 +72,9 @@ class OrderPayer {
 class ThrowingDiscardOldestPolicy : RejectedExecutionHandler {
     override fun rejectedExecution(r: Runnable, executor: ThreadPoolExecutor) {
         if (!executor.isShutdown) {
-            val removed = executor.queue.poll()
-            OrderPayer.logger.warn(
-                "Queue full — dropped oldest payment task: {}. Rejecting new task.",
-                removed?.javaClass?.simpleName ?: "unknown"
-            )
+            executor.queue.poll()
         }
 
-        throw RejectedExecutionException("Payment queue full — rejecting new task.")
+        throw RejectedExecutionException()
     }
 }
