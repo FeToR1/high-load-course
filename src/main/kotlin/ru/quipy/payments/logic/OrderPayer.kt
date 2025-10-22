@@ -43,6 +43,11 @@ class OrderPayer {
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
+
+        if (paymentExecutor.queue.remainingCapacity() == 0) {
+            throw HttpClientErrorException(HttpStatus.TOO_MANY_REQUESTS, "Payment queue full")
+        }
+
         val task = {
             val createdEvent = paymentESService.create {
                 it.create(
