@@ -11,6 +11,7 @@ import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
+import java.time.Instant
 import java.util.*
 
 @RestController
@@ -72,19 +73,27 @@ class APIController {
             it
         } ?: throw IllegalArgumentException("No such order $orderId")
 
-        try {
-            val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
-            return ResponseEntity.status(200)
-                .body(PaymentSubmissionDto(createdAt, paymentId))
-        } catch (_: HttpClientErrorException) {
-            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                .header("Retry-After", "1000")
-                .body(null)
-        }
+        val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
+        return ResponseEntity.status(200)
+            .body(PaymentSubmissionDto(createdAt, paymentId))
     }
 
     class PaymentSubmissionDto(
         val timestamp: Long,
         val transactionId: UUID
     )
+
+    @ExceptionHandler(HttpClientErrorException::class)
+    fun handleTooManyRequestsException(e: HttpClientErrorException): ResponseEntity<Any> {
+        logger.warn("Too many requests: {}", e.message)
+
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+            .body(
+                mapOf(
+                    "error" to "Too Many Requests",
+                    "message" to "Rate limit exceeded. Please try again later.",
+                    "timestamp" to Instant.now()
+                )
+            )
+    }
 }
