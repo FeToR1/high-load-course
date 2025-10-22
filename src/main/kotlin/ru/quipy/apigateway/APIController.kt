@@ -10,7 +10,6 @@ import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
-import ru.quipy.payments.logic.TooManyRequestsWithRetryAfterException
 import java.time.Instant
 import java.util.*
 
@@ -73,15 +72,8 @@ class APIController {
             it
         } ?: throw IllegalArgumentException("No such order $orderId")
 
-        try {
-            val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
-            return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
-        }
-        catch (e: TooManyRequestsWithRetryAfterException) {
-            return ResponseEntity.status(429)
-                .header("Retry-After", e.getRetryAfter().toString())
-                .build();
-        }
+        val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
+        return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
     }
 
     class PaymentSubmissionDto(

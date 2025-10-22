@@ -3,7 +3,9 @@ package ru.quipy.payments.logic
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
+import org.springframework.web.client.HttpClientErrorException
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
 import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.core.EventSourcingService
@@ -47,7 +49,7 @@ class OrderPayer {
 
         if (paymentExecutor.queue.remainingCapacity() == 0) {
             val a = randomizeRetryAfter(1000)
-            throw TooManyRequestsWithRetryAfterException(a)
+            throw HttpClientErrorException(HttpStatus.TOO_MANY_REQUESTS)
         }
 
         paymentExecutor.submit {
@@ -65,28 +67,4 @@ class OrderPayer {
         return createdAt
     }
 
-}
-
-class TooManyRequestsWithRetryAfterException : Exception {
-    private val retryAfter: Long
-    constructor() : super() {
-        retryAfter = 60000
-    }
-    constructor(retryAfter: Long) : super() {
-        this.retryAfter = retryAfter
-    }
-
-    constructor(message: String, retryAfter: Long) : super(message) {
-        this.retryAfter = retryAfter
-    }
-
-    constructor(message: String, cause: Throwable, retryAfter: Long) : super(message, cause) {
-        this.retryAfter = retryAfter
-    }
-
-    constructor(cause: Throwable, retryAfter: Long) : super(cause) {
-        this.retryAfter = retryAfter
-    }
-
-    fun getRetryAfter(): Long = this.retryAfter
 }
