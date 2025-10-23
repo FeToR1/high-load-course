@@ -28,6 +28,7 @@ interface PaymentExternalSystemAdapter {
     fun rateLimitPerSec(): Int
 
     fun parallelRequests(): Int
+    fun getProperties(): PaymentAccountProperties
 }
 
 /**

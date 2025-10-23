@@ -2,11 +2,9 @@ package ru.quipy.apigateway
 
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import org.springframework.http.HttpHeaders
-import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.*
-import org.springframework.web.client.HttpClientErrorException
 import ru.quipy.common.utils.LeakingBucketRateLimiter
+import ru.quipy.common.utils.RateLimitExceededException
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.orders.repository.OrderRepository
@@ -24,9 +22,9 @@ class APIController(
 ) {
     private val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
     private val bucket: LeakingBucketRateLimiter
+    private val account = paymentAccounts[0]
 
     init {
-        val account = paymentAccounts[0]
         bucket = LeakingBucketRateLimiter(
             account.rateLimitPerSec().toLong(),
             Duration.ofSeconds(1),
@@ -75,13 +73,8 @@ class APIController(
         monitoringService.increaseRequestsCounter(RequestType.INCOMING)
 
         if (!bucket.tick()) {
-            throw HttpClientErrorException.create(
-                HttpStatus.TOO_MANY_REQUESTS,
-                "Too many requests",
-                HttpHeaders.EMPTY,
-                byteArrayOf(),
-                null
-            )
+            val processTime = account.getProperties().averageProcessingTime.toMillis()
+            throw RateLimitExceededException(processTime.toString())
         }
 
         val paymentId = UUID.randomUUID()
