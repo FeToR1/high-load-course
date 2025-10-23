@@ -4,7 +4,6 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
-import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
@@ -63,7 +62,7 @@ class APIController {
     }
 
     @PostMapping("/orders/{orderId}/payment")
-    fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<PaymentSubmissionDto> {
+    fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
         monitoringService.increaseRequestsCounter(RequestType.INCOMING)
 
         val paymentId = UUID.randomUUID()
@@ -73,7 +72,7 @@ class APIController {
         } ?: throw IllegalArgumentException("No such order $orderId")
 
         val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
-        return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
+        return PaymentSubmissionDto(createdAt, paymentId)
     }
 
     class PaymentSubmissionDto(
@@ -81,8 +80,8 @@ class APIController {
         val transactionId: UUID
     )
 
-    @ExceptionHandler(Throwable::class)
-    fun handleTooManyRequestsException(e: Throwable): ResponseEntity<Any> {
+    @ExceptionHandler(HttpClientErrorException::class)
+    fun handleTooManyRequestsException(e: HttpClientErrorException): ResponseEntity<Any> {
         logger.warn("Too many requests: {}", e.message)
 
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)

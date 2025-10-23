@@ -28,11 +28,6 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private fun randomizeRetryAfter(minValue: Long, jitterFactor: Double = 2.0): Long {
-        val jitter = (minValue * jitterFactor * Math.random()).toLong()
-        return minValue + jitter
-    }
-
     private val paymentExecutor = ThreadPoolExecutor(
         16,
         16,
@@ -48,7 +43,6 @@ class OrderPayer {
 
 
         if (paymentExecutor.queue.remainingCapacity() == 0) {
-            val a = randomizeRetryAfter(1000)
             throw HttpClientErrorException(HttpStatus.TOO_MANY_REQUESTS)
         }
 
