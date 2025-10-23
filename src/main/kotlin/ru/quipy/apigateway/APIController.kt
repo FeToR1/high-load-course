@@ -4,7 +4,9 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import org.springframework.web.client.HttpClientErrorException
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.orders.repository.OrderRepository
@@ -80,8 +82,8 @@ class APIController {
         val transactionId: UUID
     )
 
-    @ExceptionHandler(HttpClientErrorException::class)
-    fun handleTooManyRequestsException(e: HttpClientErrorException): ResponseEntity<Any> {
+    @ExceptionHandler(HttpClientErrorException.TooManyRequests::class)
+    fun handleTooManyRequestsException(e: HttpClientErrorException.TooManyRequests): ResponseEntity<Any> {
         logger.warn("Too many requests: {}", e.message)
 
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
