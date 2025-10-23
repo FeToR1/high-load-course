@@ -3,6 +3,7 @@ package ru.quipy.payments.logic
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.web.client.HttpClientErrorException
@@ -43,7 +44,13 @@ class OrderPayer {
 
 
         if (paymentExecutor.queue.remainingCapacity() == 0) {
-            throw HttpClientErrorException(HttpStatus.TOO_MANY_REQUESTS)
+            throw HttpClientErrorException.create(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Too many requests",
+                HttpHeaders.EMPTY,
+                byteArrayOf(),
+                null
+            )
         }
 
         paymentExecutor.submit {
