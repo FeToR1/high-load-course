@@ -2,27 +2,38 @@ package ru.quipy.apigateway
 
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpHeaders
+import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.*
+import org.springframework.web.client.HttpClientErrorException
+import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
+import ru.quipy.payments.logic.PaymentExternalSystemAdapter
+import java.time.Duration
 import java.util.*
 
 @RestController
-class APIController {
+class APIController(
+    paymentAccounts: List<PaymentExternalSystemAdapter>,
+    private val orderRepository: OrderRepository,
+    private val orderPayer: OrderPayer,
+    private val monitoringService: MonitoringService
+) {
+    private val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
+    private val bucket: LeakingBucketRateLimiter
 
-    val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
+    init {
+        val account = paymentAccounts[0]
+        bucket = LeakingBucketRateLimiter(
+            account.rateLimitPerSec().toLong(),
+            Duration.ofSeconds(1),
+            100
+        )
+    }
 
-    @Autowired
-    private lateinit var orderRepository: OrderRepository
-
-    @Autowired
-    private lateinit var orderPayer: OrderPayer
-
-    @Autowired
-    private lateinit var monitoringService: MonitoringService
 
     @PostMapping("/users")
     fun createUser(@RequestBody req: CreateUserRequest): User {
@@ -62,6 +73,16 @@ class APIController {
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
         monitoringService.increaseRequestsCounter(RequestType.INCOMING)
+
+        if (!bucket.tick()) {
+            throw HttpClientErrorException.create(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Too many requests",
+                HttpHeaders.EMPTY,
+                byteArrayOf(),
+                null
+            )
+        }
 
         val paymentId = UUID.randomUUID()
         val order = orderRepository.findById(orderId)?.let {
