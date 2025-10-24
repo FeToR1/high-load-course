@@ -18,12 +18,10 @@ class MyControllerAdvice {
 
     @ExceptionHandler(RateLimitExceededException::class)
     fun handleTooManyRequestsException(e: RateLimitExceededException): ResponseEntity<Any> {
-        logger.warn("Too many requests: {}", e.message)
+        logger.warn("Too many requests")
 
         val headers = HttpHeaders()
-        val processTime = e.message?.toLongOrNull() ?: 1000L
-        val retryAfter = processTime + (processTime * 2.0 * Math.random()).toLong()
-        headers.add("Retry-After", retryAfter.toString())
+        headers.add("Retry-After", e.getRetryAfterSecondsWithJitter().toString())
 
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
             .headers(headers)
@@ -31,7 +29,7 @@ class MyControllerAdvice {
                 mapOf(
                     "error" to "Too Many Requests",
                     "message" to "Rate limit exceeded. Please try again later.",
-                    "retry_after" to retryAfter,
+                    "retry_after_ms" to e.getRetryAfterWithJitter(),
                     "timestamp" to Instant.now()
                 )
             )

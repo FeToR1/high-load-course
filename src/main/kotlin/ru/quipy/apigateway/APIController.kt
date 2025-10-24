@@ -73,8 +73,8 @@ class APIController(
         monitoringService.increaseRequestsCounter(RequestType.INCOMING)
 
         if (!bucket.tick()) {
-            val processTime = account.getProperties().averageProcessingTime.toMillis()
-            throw RateLimitExceededException(processTime.toString())
+            val processTime = account.averageProcessingTime().toMillis()
+            throw RateLimitExceededException(processTime)
         }
 
         val paymentId = UUID.randomUUID()
