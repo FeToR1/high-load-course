@@ -27,7 +27,7 @@ class APIController(
         bucket = LeakingBucketRateLimiter(
             account.rateLimitPerSec().toLong(),
             Duration.ofSeconds(1),
-            120
+            110
         )
     }
 
