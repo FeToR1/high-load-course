@@ -18,7 +18,5 @@ class RateLimitExceededException(
         return ceil(getRetryAfterWithJitter() / 1000.0).toLong()
     }
 
-    fun getRetryAfterMs(): Long = retryAfterMs
-
     fun getRetryAfterSeconds(): Long = ceil(retryAfterMs / 1000.0).toLong()
 }
