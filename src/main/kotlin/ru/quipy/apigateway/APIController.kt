@@ -20,16 +20,10 @@ class APIController(
     private val orderPayer: OrderPayer
 ) {
     private val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
-    private val bucket: LeakingBucketRateLimiter
+    @Volatile
+    private var bucket: LeakingBucketRateLimiter? = null
     private val account = paymentAccounts[0]
-
-    init {
-        bucket = LeakingBucketRateLimiter(
-            account.rateLimitPerSec().toLong(),
-            Duration.ofSeconds(1),
-            11
-        )
-    }
+    private val bucketLock = Any()
 
 
     @PostMapping("/users")
@@ -69,7 +63,21 @@ class APIController(
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
-        if (!bucket.tick()) {
+        val currentBucket = bucket ?: synchronized(bucketLock) {
+            bucket ?: run {
+                val processingTimeMillis = deadline - System.currentTimeMillis()
+                val averageProcessingTimeMillis = account.averageProcessingTime().toMillis()
+                val bucketSize = (account.rateLimitPerSec() * (processingTimeMillis - averageProcessingTimeMillis) * 0.7).toInt()
+                
+                LeakingBucketRateLimiter(
+                    account.rateLimitPerSec().toLong(),
+                    Duration.ofSeconds(1),
+                    bucketSize
+                ).also { bucket = it }
+            }
+        }
+        
+        if (!currentBucket.tick()) {
             val processTime = account.averageProcessingTime().toMillis()
             throw RateLimitExceededException(processTime)
         }
