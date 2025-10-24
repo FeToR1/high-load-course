@@ -28,13 +28,20 @@ class APIController(
         bucket = LeakingBucketRateLimiter(
             account.rateLimitPerSec().toLong(),
             Duration.ofSeconds(1),
-            100
+            230
         )
     }
 
 
     @PostMapping("/users")
     fun createUser(@RequestBody req: CreateUserRequest): User {
+        monitoringService.increaseRequestsCounter(RequestType.INCOMING)
+        
+        if (!bucket.tick()) {
+            val processTime = account.averageProcessingTime().toMillis()
+            throw RateLimitExceededException(processTime)
+        }
+        
         return User(UUID.randomUUID(), req.name)
     }
 
@@ -44,6 +51,13 @@ class APIController(
 
     @PostMapping("/orders")
     fun createOrder(@RequestParam userId: UUID, @RequestParam price: Int): Order {
+        monitoringService.increaseRequestsCounter(RequestType.INCOMING)
+        
+        if (!bucket.tick()) {
+            val processTime = account.averageProcessingTime().toMillis()
+            throw RateLimitExceededException(processTime)
+        }
+        
         val order = Order(
             UUID.randomUUID(),
             userId,
