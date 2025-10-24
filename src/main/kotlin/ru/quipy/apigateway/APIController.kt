@@ -5,13 +5,12 @@ import org.slf4j.LoggerFactory
 import org.springframework.web.bind.annotation.*
 import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.RateLimitExceededException
-import ru.quipy.monitoring.MonitoringService
-import ru.quipy.monitoring.RequestType
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import ru.quipy.payments.logic.PaymentExternalSystemAdapter
 import java.time.Duration
 import java.util.*
+import kotlin.math.min
 
 @RestController
 class APIController(
@@ -20,6 +19,7 @@ class APIController(
     private val orderPayer: OrderPayer
 ) {
     private val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
+
     @Volatile
     private var bucket: LeakingBucketRateLimiter? = null
     private val account = paymentAccounts[0]
@@ -63,20 +63,8 @@ class APIController(
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
-        val currentBucket = bucket ?: synchronized(bucketLock) {
-            bucket ?: run {
-                val processingTimeMillis = deadline - System.currentTimeMillis()
-                val averageProcessingTimeMillis = account.averageProcessingTime().toMillis()
-                val bucketSize = (account.rateLimitPerSec() * (processingTimeMillis - averageProcessingTimeMillis) * 0.7).toInt()
-                
-                LeakingBucketRateLimiter(
-                    account.rateLimitPerSec().toLong(),
-                    Duration.ofSeconds(1),
-                    bucketSize
-                ).also { bucket = it }
-            }
-        }
-        
+        val currentBucket = initBucket(deadline)
+
         if (!currentBucket.tick()) {
             val processTime = account.averageProcessingTime().toMillis()
             throw RateLimitExceededException(processTime)
@@ -90,6 +78,40 @@ class APIController(
 
         val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
         return PaymentSubmissionDto(createdAt, paymentId)
+    }
+
+    private fun initBucket(deadline: Long) : LeakingBucketRateLimiter {
+        if (bucket != null) {
+            // This will never be null once we initialise it for the first time
+            return bucket!!
+        }
+
+        synchronized(bucketLock) {
+            if (bucket != null) {
+                // Again, this is never null if we've initialised it already
+                return bucket!!
+            }
+
+            val processingTimeMillis = deadline - System.currentTimeMillis()
+            val averageProcessingTimeMillis = account.averageProcessingTime().toMillis()
+
+            val effectiveRate = min(
+                account.rateLimitPerSec().toDouble(),
+                account.parallelRequests().toDouble() / averageProcessingTimeMillis * 1000
+            )
+
+            val mult = 0.666666
+
+            val bucketSize = (effectiveRate * (processingTimeMillis - averageProcessingTimeMillis) * mult).toInt()
+
+            bucket = LeakingBucketRateLimiter(
+                account.rateLimitPerSec().toLong(),
+                Duration.ofSeconds(1),
+                bucketSize
+            )
+
+            return bucket!!
+        }
     }
 
     class PaymentSubmissionDto(
