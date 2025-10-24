@@ -17,8 +17,7 @@ import java.util.*
 class APIController(
     paymentAccounts: List<PaymentExternalSystemAdapter>,
     private val orderRepository: OrderRepository,
-    private val orderPayer: OrderPayer,
-    private val monitoringService: MonitoringService
+    private val orderPayer: OrderPayer
 ) {
     private val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
     private val bucket: LeakingBucketRateLimiter
@@ -35,13 +34,6 @@ class APIController(
 
     @PostMapping("/users")
     fun createUser(@RequestBody req: CreateUserRequest): User {
-        monitoringService.increaseRequestsCounter(RequestType.INCOMING)
-        
-        if (!bucket.tick()) {
-            val processTime = account.averageProcessingTime().toMillis()
-            throw RateLimitExceededException(processTime)
-        }
-        
         return User(UUID.randomUUID(), req.name)
     }
 
@@ -51,13 +43,6 @@ class APIController(
 
     @PostMapping("/orders")
     fun createOrder(@RequestParam userId: UUID, @RequestParam price: Int): Order {
-        monitoringService.increaseRequestsCounter(RequestType.INCOMING)
-        
-        if (!bucket.tick()) {
-            val processTime = account.averageProcessingTime().toMillis()
-            throw RateLimitExceededException(processTime)
-        }
-        
         val order = Order(
             UUID.randomUUID(),
             userId,
@@ -84,8 +69,6 @@ class APIController(
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
-        monitoringService.increaseRequestsCounter(RequestType.INCOMING)
-
         if (!bucket.tick()) {
             val processTime = account.averageProcessingTime().toMillis()
             throw RateLimitExceededException(processTime)

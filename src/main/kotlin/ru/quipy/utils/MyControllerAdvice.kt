@@ -34,4 +34,18 @@ class MyControllerAdvice {
                 )
             )
     }
+
+    @ExceptionHandler(IllegalArgumentException::class)
+    fun handleIllegalArgumentException(e: IllegalArgumentException): ResponseEntity<Any> {
+        logger.warn("Invalid request: ${e.message}")
+
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+            .body(
+                mapOf(
+                    "error" to "Not Found",
+                    "message" to e.message,
+                    "timestamp" to Instant.now()
+                )
+            )
+    }
 }
