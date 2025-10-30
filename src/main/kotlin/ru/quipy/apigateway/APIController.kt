@@ -102,7 +102,9 @@ class APIController(
                 account.parallelRequests().toDouble() / averageProcessingTimeSeconds
             )
 
-            val bucketSize: Int = (effectiveRps * (ttl - averageProcessingTimeSeconds)).toInt()
+            val mult: Double = 0.90
+
+            val bucketSize: Int = (effectiveRps * (ttl - averageProcessingTimeSeconds) * mult).toInt()
 
             logger.warn("bucketSize = $bucketSize")
 
