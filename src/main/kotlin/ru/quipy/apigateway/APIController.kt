@@ -33,7 +33,7 @@ class APIController(
         return User(UUID.randomUUID(), req.name)
     }
 
-    private val logger = LoggerFactory.getLogger(javaClass)
+    private val logger = LoggerFactory.getLogger(APIController::class.java)
 
     data class CreateUserRequest(val name: String, val password: String)
 
@@ -95,18 +95,16 @@ class APIController(
             }
 
             val ttl: Double = (deadlineSeconds - System.currentTimeMillis()).toDouble() / 1000
-            val averageProcessingTimeSeconds: Double = account.averageProcessingTime().toSeconds().toDouble()
+            val averageProcessingTimeSeconds: Double = account.averageProcessingTime().toSeconds().toDouble() * 2
 
             val effectiveRps: Double = min(
                 account.rateLimitPerSec().toDouble(),
                 account.parallelRequests().toDouble() / averageProcessingTimeSeconds
             )
 
-            val mult: Double = 0.90
+            val bucketSize: Int = (effectiveRps * (ttl - averageProcessingTimeSeconds)).toInt()
 
-            val bucketSize: Int = (effectiveRps * (ttl - averageProcessingTimeSeconds) * mult).toInt()
-
-            logger.warn("bucketSize = $bucketSize")
+            logger.debug("Leaking bucket size: $bucketSize")
 
             bucket = LeakingBucketRateLimiter(
                 account.rateLimitPerSec().toLong(),
