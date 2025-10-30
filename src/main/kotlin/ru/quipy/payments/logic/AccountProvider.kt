@@ -2,12 +2,9 @@ package ru.quipy.payments.logic
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.async
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.selects.select
-import ru.quipy.common.utils.BlockingRateLimiter
 import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.SlidingWindowRateLimiter
+import ru.quipy.common.utils.BlockingRateLimiter
 import java.time.Duration
 import java.util.concurrent.Executors
 
@@ -27,17 +24,10 @@ class AccountProvider(
     )
 
     fun acquire(): PaymentExternalSystemAdapter {
-        return runBlocking {
-            select {
-                paymentAccounts.forEach { account ->
-                    queueScope.async {
-                        ongoingWindows.getValue(account.name()).acquire()
-                        rateLimiters.getValue(account.name()).tickBlocking()
-                        return@async account
-                    }.onAwait { it }
-                }
-            }
-        }
+        val account = paymentAccounts[0]
+        ongoingWindows.getValue(account.name()).acquire()
+        rateLimiters.getValue(account.name()).tickBlocking()
+        return account
     }
 
     fun release(accountName: String) {

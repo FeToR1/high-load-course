@@ -3,7 +3,9 @@ package ru.quipy.payments.logic
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
+import org.springframework.web.client.HttpClientErrorException
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
 import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.core.EventSourcingService
@@ -31,13 +33,19 @@ class OrderPayer {
         16,
         0L,
         TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(8_000),
+        LinkedBlockingQueue(300),
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
+
+
+        if (paymentExecutor.queue.remainingCapacity() == 0) {
+            throw HttpClientErrorException(HttpStatus.TOO_MANY_REQUESTS)
+        }
+
         paymentExecutor.submit {
             val createdEvent = paymentESService.create {
                 it.create(
@@ -52,4 +60,5 @@ class OrderPayer {
         }
         return createdAt
     }
+
 }

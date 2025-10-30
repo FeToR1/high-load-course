@@ -3,11 +3,15 @@ package ru.quipy.apigateway
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import org.springframework.web.client.HttpClientErrorException
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
+import java.time.Instant
 import java.util.*
 
 @RestController
@@ -77,4 +81,18 @@ class APIController {
         val timestamp: Long,
         val transactionId: UUID
     )
+
+    @ExceptionHandler(HttpClientErrorException.TooManyRequests::class)
+    fun handleTooManyRequestsException(e: HttpClientErrorException.TooManyRequests): ResponseEntity<Any> {
+        logger.warn("Too many requests: {}", e.message)
+
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+            .body(
+                mapOf(
+                    "error" to "Too Many Requests",
+                    "message" to "Rate limit exceeded. Please try again later.",
+                    "timestamp" to Instant.now()
+                )
+            )
+    }
 }
