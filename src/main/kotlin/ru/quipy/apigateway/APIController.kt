@@ -102,7 +102,7 @@ class APIController(
                 account.parallelRequests().toDouble() / averageProcessingTimeSeconds
             )
 
-            val mult: Double = account.rateLimitPerSec().toDouble() / 64 // TODO: magic number
+            val mult: Double = account.rateLimitPerSec().toDouble() / 16 // TODO: magic number
 
             val bucketSize: Int = (effectiveRps * (ttl - averageProcessingTimeSeconds) * mult).toInt()
 
