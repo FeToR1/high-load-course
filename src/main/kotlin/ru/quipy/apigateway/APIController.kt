@@ -25,7 +25,6 @@ class APIController(
     private val account = paymentAccounts[0]
     private val bucketLock = Any()
 
-
     @PostMapping("/users")
     fun createUser(@RequestBody req: CreateUserRequest): User {
         return User(UUID.randomUUID(), req.name)
@@ -63,11 +62,11 @@ class APIController(
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
-        initBucketOnce(deadline)
+        val rateLimiter = getRateLimiter(deadline)
 
-        if (!bucket!!.tick()) {
+        if (!rateLimiter.tick()) {
             val processTime = account.averageProcessingTime().toMillis()
-            throw RateLimitExceededException(processTime)
+            throw RateLimitExceededException(processTime * 5)
         }
 
         val paymentId = UUID.randomUUID()
@@ -80,11 +79,16 @@ class APIController(
         return PaymentSubmissionDto(createdAt, paymentId)
     }
 
-    private fun initBucketOnce(deadline: Long) {
-        if (bucket != null) return
+    private fun getRateLimiter(deadline: Long): LeakingBucketRateLimiter {
+        // bucket will never be null once it has a value
+        if (bucket != null) {
+            return bucket!!
+        }
 
         synchronized(bucketLock) {
-            if (bucket != null) return
+            if (bucket != null) {
+                return bucket!!
+            }
 
             val processingTimeMillis = deadline - System.currentTimeMillis()
             val averageProcessingTimeMillis = account.averageProcessingTime().toMillis()
@@ -103,6 +107,8 @@ class APIController(
                 Duration.ofSeconds(1),
                 bucketSize
             )
+
+            return bucket!!
         }
     }
 

@@ -12,9 +12,7 @@ import java.time.Instant
 
 @ControllerAdvice
 class MyControllerAdvice {
-
-    val logger: Logger = LoggerFactory.getLogger(MyControllerAdvice::class.java)
-
+    private val logger: Logger = LoggerFactory.getLogger(MyControllerAdvice::class.java)
 
     @ExceptionHandler(RateLimitExceededException::class)
     fun handleTooManyRequestsException(e: RateLimitExceededException): ResponseEntity<Any> {
