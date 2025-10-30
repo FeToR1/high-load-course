@@ -33,6 +33,8 @@ class APIController(
         return User(UUID.randomUUID(), req.name)
     }
 
+    private val logger = LoggerFactory.getLogger(javaClass)
+
     data class CreateUserRequest(val name: String, val password: String)
 
     data class User(val id: UUID, val name: String)
@@ -96,6 +98,8 @@ class APIController(
             val mult: Double = account.rateLimitPerSec().toDouble() / 64 // TODO: magic number
 
             val bucketSize: Int = (effectiveRps * (ttl - averageProcessingTimeSeconds) * mult).toInt()
+
+            logger.warn("bucketSize = $bucketSize")
 
             bucket = LeakingBucketRateLimiter(
                 account.rateLimitPerSec().toLong(),
