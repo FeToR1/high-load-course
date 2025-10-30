@@ -85,8 +85,15 @@ class APIController(
     }
 
     private fun initBucketOnce(deadlineSeconds: Long) {
+        if (bucket != null) {
+            return
+        }
 
         synchronized(bucketLock) {
+            if (bucket != null) {
+                return
+            }
+
             val ttl: Double = (deadlineSeconds - System.currentTimeMillis()).toDouble() / 1000
             val averageProcessingTimeSeconds: Double = account.averageProcessingTime().toSeconds().toDouble()
 
