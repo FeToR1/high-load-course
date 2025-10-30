@@ -1,15 +1,17 @@
 package ru.quipy.apigateway
 
-import org.slf4j.Logger
-import org.slf4j.LoggerFactory
-import org.springframework.web.bind.annotation.*
+import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
+import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.bind.annotation.RestController
 import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.RateLimitExceededException
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import ru.quipy.payments.logic.PaymentExternalSystemAdapter
 import java.time.Duration
-import java.util.*
+import java.util.UUID
 import kotlin.math.min
 
 @RestController
@@ -18,8 +20,6 @@ class APIController(
     private val orderRepository: OrderRepository,
     private val orderPayer: OrderPayer
 ) {
-    private val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
-
     @Volatile
     private var bucket: LeakingBucketRateLimiter? = null
     private val account = paymentAccounts[0]
@@ -63,9 +63,9 @@ class APIController(
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
-        val currentBucket = initBucket(deadline)
+        initBucketOnce(deadline)
 
-        if (!currentBucket.tick()) {
+        if (!bucket!!.tick()) {
             val processTime = account.averageProcessingTime().toMillis()
             throw RateLimitExceededException(processTime)
         }
@@ -80,17 +80,11 @@ class APIController(
         return PaymentSubmissionDto(createdAt, paymentId)
     }
 
-    private fun initBucket(deadline: Long) : LeakingBucketRateLimiter {
-        if (bucket != null) {
-            // This will never be null once we initialise it for the first time
-            return bucket!!
-        }
+    private fun initBucketOnce(deadline: Long) {
+        if (bucket != null) return
 
         synchronized(bucketLock) {
-            if (bucket != null) {
-                // Again, this is never null if we've initialised it already
-                return bucket!!
-            }
+            if (bucket != null) return
 
             val processingTimeMillis = deadline - System.currentTimeMillis()
             val averageProcessingTimeMillis = account.averageProcessingTime().toMillis()
@@ -100,7 +94,7 @@ class APIController(
                 account.parallelRequests().toDouble() / averageProcessingTimeMillis * 1000
             )
 
-            val mult = 0.666666
+            val mult = 0.666666 // TODO: magic number
 
             val bucketSize = (effectiveRate * (processingTimeMillis - averageProcessingTimeMillis) * mult).toInt()
 
@@ -109,8 +103,6 @@ class APIController(
                 Duration.ofSeconds(1),
                 bucketSize
             )
-
-            return bucket!!
         }
     }
 
