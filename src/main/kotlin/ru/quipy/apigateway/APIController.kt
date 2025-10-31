@@ -94,8 +94,12 @@ class APIController(
                 return
             }
 
+            val paymentSystemErrorCoeff = 1.1
+            val ourProcessingTime = 0.35
+
             val ttl: Double = (deadlineSeconds - System.currentTimeMillis()).toDouble() / 1000
-            val averageProcessingTimeSeconds: Double = account.averageProcessingTime().toSeconds().toDouble() * 1.4
+            val averageProcessingTimeSeconds: Double =
+                account.averageProcessingTime().toSeconds().toDouble() * paymentSystemErrorCoeff + ourProcessingTime
 
             val effectiveRps: Double = min(
                 account.rateLimitPerSec().toDouble(),
