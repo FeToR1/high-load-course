@@ -95,7 +95,7 @@ class APIController(
             }
 
             val ttl: Double = (deadlineSeconds - System.currentTimeMillis()).toDouble() / 1000
-            val averageProcessingTimeSeconds: Double = account.averageProcessingTime().toSeconds().toDouble() * 2
+            val averageProcessingTimeSeconds: Double = account.averageProcessingTime().toSeconds().toDouble() * 1.4
 
             val effectiveRps: Double = min(
                 account.rateLimitPerSec().toDouble(),
