@@ -31,8 +31,9 @@ class PaymentExternalSystemAdapterImpl(
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
 
-        const val RETRY_DELAY_BASIS = 1.1
-        const val MAX_RETRIES = 3
+        const val RETRY_DELAY_BASE = 2.0
+        const val RETRY_DELAY_COEFF = 0.225
+        const val MAX_RETRIES = 5
     }
 
     private val serviceName = properties.serviceName
@@ -64,13 +65,20 @@ class PaymentExternalSystemAdapterImpl(
                 post(emptyBody)
             }.build()
             for (i in 1..MAX_RETRIES) {
-                if (sendRequest(request, paymentId, transactionId)) break
-                val delay = (RETRY_DELAY_BASIS.pow(i) * averageProcessingTime().toMillis().toDouble()).toLong()
+                if (sendRequest(request, paymentId, transactionId)) {
+                    break
+                }
+
+                val delay = (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(i)).toLong()
+
                 if (deadline < System.currentTimeMillis() + delay) {
                     monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
                     return
                 }
-                Thread.sleep(delay)
+
+                if (i < MAX_RETRIES) {
+                    Thread.sleep(delay)
+                }
             }
         } catch (e: Exception) {
             when (e) {
