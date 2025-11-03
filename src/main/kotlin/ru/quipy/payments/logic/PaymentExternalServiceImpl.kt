@@ -111,6 +111,8 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun name() = properties.accountName
 
+    override fun averageProcessingTime() = properties.averageProcessingTime
+
 }
 
 fun now() = System.currentTimeMillis()

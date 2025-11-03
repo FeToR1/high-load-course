@@ -28,6 +28,8 @@ interface PaymentExternalSystemAdapter {
     fun rateLimitPerSec(): Int
 
     fun parallelRequests(): Int
+
+    fun averageProcessingTime(): Duration
 }
 
 /**
@@ -39,7 +41,7 @@ data class PaymentAccountProperties(
     val parallelRequests: Int,
     val rateLimitPerSec: Int,
     val price: Int,
-    val averageProcessingTime: Duration = Duration.ofSeconds(11),
+    val averageProcessingTime: Duration,
     val enabled: Boolean,
 )
 

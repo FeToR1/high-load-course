@@ -3,11 +3,10 @@ package ru.quipy.payments.logic
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
-import org.springframework.web.client.HttpClientErrorException
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
 import ru.quipy.common.utils.NamedThreadFactory
+import ru.quipy.common.utils.RateLimitExceededException
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.util.*
@@ -29,8 +28,8 @@ class OrderPayer {
     private lateinit var paymentService: PaymentService
 
     private val paymentExecutor = ThreadPoolExecutor(
-        16,
-        16,
+        64,
+        64,
         0L,
         TimeUnit.MILLISECONDS,
         LinkedBlockingQueue(300),
@@ -41,9 +40,8 @@ class OrderPayer {
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
 
-
         if (paymentExecutor.queue.remainingCapacity() == 0) {
-            throw HttpClientErrorException(HttpStatus.TOO_MANY_REQUESTS)
+            throw RateLimitExceededException(1000)
         }
 
         paymentExecutor.submit {

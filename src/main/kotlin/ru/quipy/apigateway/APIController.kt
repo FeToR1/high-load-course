@@ -2,36 +2,38 @@ package ru.quipy.apigateway
 
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.http.HttpStatus
-import org.springframework.http.ResponseEntity
-import org.springframework.web.bind.annotation.*
-import org.springframework.web.client.HttpClientErrorException
-import ru.quipy.monitoring.MonitoringService
-import ru.quipy.monitoring.RequestType
+import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
+import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.bind.annotation.RestController
+import ru.quipy.common.utils.LeakingBucketRateLimiter
+import ru.quipy.common.utils.RateLimitExceededException
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
-import java.time.Instant
-import java.util.*
+import ru.quipy.payments.logic.PaymentExternalSystemAdapter
+import ru.quipy.utils.MyControllerAdvice
+import java.time.Duration
+import java.util.UUID
+import kotlin.math.min
 
 @RestController
-class APIController {
-
-    val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
-
-    @Autowired
-    private lateinit var orderRepository: OrderRepository
-
-    @Autowired
-    private lateinit var orderPayer: OrderPayer
-
-    @Autowired
-    private lateinit var monitoringService: MonitoringService
+class APIController(
+    paymentAccounts: List<PaymentExternalSystemAdapter>,
+    private val orderRepository: OrderRepository,
+    private val orderPayer: OrderPayer
+) {
+    @Volatile
+    private var bucket: LeakingBucketRateLimiter? = null
+    private val account = paymentAccounts[0]
+    private val bucketLock = Any()
 
     @PostMapping("/users")
     fun createUser(@RequestBody req: CreateUserRequest): User {
         return User(UUID.randomUUID(), req.name)
     }
+
+    private val logger = LoggerFactory.getLogger(APIController::class.java)
 
     data class CreateUserRequest(val name: String, val password: String)
 
@@ -65,7 +67,12 @@ class APIController {
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
-        monitoringService.increaseRequestsCounter(RequestType.INCOMING)
+        initBucketOnce(deadline)
+
+        if (!bucket!!.tick()) {
+            val processTime = account.averageProcessingTime().toMillis()
+            throw RateLimitExceededException(5 * processTime)
+        }
 
         val paymentId = UUID.randomUUID()
         val order = orderRepository.findById(orderId)?.let {
@@ -77,22 +84,42 @@ class APIController {
         return PaymentSubmissionDto(createdAt, paymentId)
     }
 
+    private fun initBucketOnce(deadlineSeconds: Long) {
+        if (bucket != null) {
+            return
+        }
+
+        synchronized(bucketLock) {
+            if (bucket != null) {
+                return
+            }
+
+            val paymentSystemErrorCoeff = 1.1
+            val ourProcessingTime = 0.35
+
+            val ttl: Double = (deadlineSeconds - System.currentTimeMillis()).toDouble() / 1000
+            val averageProcessingTimeSeconds: Double =
+                account.averageProcessingTime().toSeconds().toDouble() * paymentSystemErrorCoeff + ourProcessingTime
+
+            val effectiveRps: Double = min(
+                account.rateLimitPerSec().toDouble(),
+                account.parallelRequests().toDouble() / averageProcessingTimeSeconds
+            )
+
+            val bucketSize: Int = (effectiveRps * (ttl - averageProcessingTimeSeconds)).toInt()
+
+            logger.debug("Leaking bucket size: $bucketSize")
+
+            bucket = LeakingBucketRateLimiter(
+                account.rateLimitPerSec().toLong(),
+                Duration.ofSeconds(1),
+                bucketSize
+            )
+        }
+    }
+
     class PaymentSubmissionDto(
         val timestamp: Long,
         val transactionId: UUID
     )
-
-    @ExceptionHandler(HttpClientErrorException.TooManyRequests::class)
-    fun handleTooManyRequestsException(e: HttpClientErrorException.TooManyRequests): ResponseEntity<Any> {
-        logger.warn("Too many requests: {}", e.message)
-
-        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-            .body(
-                mapOf(
-                    "error" to "Too Many Requests",
-                    "message" to "Rate limit exceeded. Please try again later.",
-                    "timestamp" to Instant.now()
-                )
-            )
-    }
 }
