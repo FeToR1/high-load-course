@@ -13,6 +13,7 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import kotlin.math.pow
 
 
 // Advice: always treat time as a Duration
@@ -29,6 +30,10 @@ class PaymentExternalSystemAdapterImpl(
 
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
+
+        const val RETRY_DELAY_BASE = 2.0
+        const val RETRY_DELAY_COEFF = 0.225
+        const val MAX_RETRIES = 5
     }
 
     private val serviceName = properties.serviceName
@@ -59,26 +64,20 @@ class PaymentExternalSystemAdapterImpl(
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                 post(emptyBody)
             }.build()
-
-            client.newCall(request).execute().use { response ->
-                monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
-
-                val body = try {
-                    mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
-                } catch (e: Exception) {
-                    logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
-                    ExternalSysResponse(transactionId.toString(), paymentId.toString(),false, e.message)
+            for (i in 1..MAX_RETRIES) {
+                if (sendRequest(request, paymentId, transactionId)) {
+                    break
                 }
 
-                logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+                val delay = (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(i)).toLong()
 
-                val requestType = if (body.result) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
-                monitoringService.increaseRequestsCounter(requestType)
+                if (deadline < System.currentTimeMillis() + delay) {
+                    monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
+                    return
+                }
 
-                // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
-                // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-                paymentESService.update(paymentId) {
-                    it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                if (i < MAX_RETRIES) {
+                    Thread.sleep(delay)
                 }
             }
         } catch (e: Exception) {
@@ -98,6 +97,32 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
+        }
+    }
+
+    fun sendRequest(request: Request, paymentId: UUID, transactionId: UUID): Boolean {
+        client.newCall(request).execute().use { response ->
+            monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
+
+            val body = try {
+                mapper.readValue(response.body?.string(), ExternalSysResponse::class.java)
+            } catch (e: Exception) {
+                logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
+                ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+            }
+
+            logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+
+            val requestType = if (body.result) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
+            monitoringService.increaseRequestsCounter(requestType)
+
+            // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
+            // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
+            paymentESService.update(paymentId) {
+                it.logProcessing(body.result, now(), transactionId, reason = body.message)
+            }
+
+            return body.result
         }
     }
 
