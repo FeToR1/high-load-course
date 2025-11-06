@@ -69,6 +69,10 @@ class PaymentExternalSystemAdapterImpl(
                     break
                 }
 
+                if (i > 1) {
+                    monitoringService.increaseRetryCounter()
+                }
+
                 val delay = (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(i)).toLong()
 
                 if (deadline < System.currentTimeMillis() + delay) {
@@ -101,6 +105,8 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     fun sendRequest(request: Request, paymentId: UUID, transactionId: UUID): Boolean {
+        val startTime = System.currentTimeMillis()
+        
         client.newCall(request).execute().use { response ->
             monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
 
@@ -115,6 +121,9 @@ class PaymentExternalSystemAdapterImpl(
 
             val requestType = if (body.result) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
             monitoringService.increaseRequestsCounter(requestType)
+
+            val duration = System.currentTimeMillis() - startTime
+            monitoringService.recordRequestDuration(duration, body.result)
 
             // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
             // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
