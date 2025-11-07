@@ -4,6 +4,7 @@ import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.Metrics
 import io.micrometer.core.instrument.Timer
 import org.springframework.stereotype.Service
+import java.time.Duration
 import java.util.concurrent.TimeUnit
 
 enum class RequestType {
@@ -31,11 +32,19 @@ class MonitoringService() {
 
     fun recordRequestDuration(durationMs: Long, success: Boolean) {
         Timer.builder("http_request_duration")
-            .description("Request duration with percentiles (50th, 90th, 95th, 99th, 99.9th)")
+            .description("Request duration with percentiles (50th, 90th, 95th, 99th)")
             .tags("success", success.toString())
-            .publishPercentiles(0.5, 0.9, 0.95, 0.99, 0.999)
+            .publishPercentiles(0.5, 0.9, 0.95, 0.99)
             .publishPercentileHistogram()
             .register(Metrics.globalRegistry)
             .record(durationMs, TimeUnit.MILLISECONDS)
+    }
+
+    fun get90thPercentileTimeout(): Duration {
+        return Duration.ofMillis(DEFAULT_TIMEOUT_MS)
+    }
+
+    companion object {
+        private const val DEFAULT_TIMEOUT_MS = 1070L
     }
 }
