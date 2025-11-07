@@ -11,6 +11,7 @@ import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
+import java.io.InterruptedIOException
 import java.time.Duration
 import java.util.*
 import kotlin.math.pow
@@ -75,8 +76,21 @@ class PaymentExternalSystemAdapterImpl(
                 post(emptyBody)
             }.build()
             for (i in 1..MAX_RETRIES) {
-                if (sendRequest(request, paymentId, transactionId)) {
-                    break
+                try {
+                    if (sendRequest(request, paymentId, transactionId)) {
+                        break
+                    }
+                } catch (e: InterruptedIOException) {
+                    logger.warn("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId, attempt $i/$MAX_RETRIES", e)
+                    
+                    if (i == MAX_RETRIES) {
+                        logger.error("[$accountName] Payment timeout after all retries for txId: $transactionId, payment: $paymentId")
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = "Request timeout after $MAX_RETRIES retries.")
+                        }
+                        monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
+                        return
+                    }
                 }
 
                 if (i > 1) {
