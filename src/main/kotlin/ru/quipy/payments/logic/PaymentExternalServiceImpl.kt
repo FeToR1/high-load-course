@@ -10,7 +10,6 @@ import ru.quipy.core.EventSourcingService
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.payments.api.PaymentAggregate
-import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
@@ -40,21 +39,22 @@ class PaymentExternalSystemAdapterImpl(
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
 
-    private val client: OkHttpClient
-        get() {
-            val timeout = monitoringService.get90thPercentileTimeout()
-            return OkHttpClient.Builder()
-                .callTimeout(timeout)
-                .connectTimeout(timeout)
-                .readTimeout(timeout)
-                .writeTimeout(timeout)
-                .build()
-        }
+    private val client: OkHttpClient by lazy {
+        val timeout = monitoringService.get90thPercentileTimeout()
+        OkHttpClient.Builder()
+            .callTimeout(timeout)
+            .connectTimeout(timeout)
+            .readTimeout(timeout)
+            .writeTimeout(timeout)
+            .build()
+    }
 
     override fun performPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
-        if (now() > deadline) {
+        val deadlineMs = deadline * 1000
+
+        if (now() > deadlineMs) {
             monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
             return
         }
@@ -85,7 +85,7 @@ class PaymentExternalSystemAdapterImpl(
 
                 val delay = (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(i)).toLong()
 
-                if (deadline < System.currentTimeMillis() + delay) {
+                if (deadlineMs < System.currentTimeMillis() + delay) {
                     monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
                     return
                 }
@@ -96,7 +96,7 @@ class PaymentExternalSystemAdapterImpl(
             }
         } catch (e: Exception) {
             when (e) {
-                is SocketTimeoutException, is InterruptedIOException -> {
+                is SocketTimeoutException -> {
                     logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
