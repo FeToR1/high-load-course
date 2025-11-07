@@ -40,7 +40,7 @@ class PaymentExternalSystemAdapterImpl(
     private val accountName = properties.accountName
 
     private val client: OkHttpClient by lazy {
-        val timeout = monitoringService.get90thPercentileTimeout()
+        val timeout = averageProcessingTime()
         OkHttpClient.Builder()
             .callTimeout(timeout)
             .connectTimeout(timeout)
