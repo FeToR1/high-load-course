@@ -41,7 +41,7 @@ class PaymentExternalSystemAdapterImpl(
     private val accountName = properties.accountName
 
     private val client: OkHttpClient by lazy {
-        val timeout = monitoringService.get90thPercentileTimeout()
+        val timeout = monitoringService.get90thPercentileTimeout(accountName)
         OkHttpClient.Builder()
             .callTimeout(timeout)
             .connectTimeout(timeout)
@@ -141,13 +141,13 @@ class PaymentExternalSystemAdapterImpl(
                 ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
             }
 
+            val duration = System.currentTimeMillis() - startTime
+            monitoringService.recordRequestDuration(duration, body.result)
+
             logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
 
             val requestType = if (body.result) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
             monitoringService.increaseRequestsCounter(requestType)
-
-            val duration = System.currentTimeMillis() - startTime
-            monitoringService.recordRequestDuration(duration, body.result)
 
             // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
             // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
