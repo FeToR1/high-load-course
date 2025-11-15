@@ -2,7 +2,10 @@ package ru.quipy.monitoring
 
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.Metrics
+import io.micrometer.core.instrument.Timer
 import org.springframework.stereotype.Service
+import java.time.Duration
+import java.util.concurrent.TimeUnit
 
 enum class RequestType {
     INCOMING,
@@ -20,4 +23,33 @@ class MonitoringService() {
         .tags("type", requestType.name)
         .register(Metrics.globalRegistry)
         .increment()
+
+    fun increaseRetryCounter() = Counter
+        .builder("http_retry_count")
+        .description("Total number of retry attempts")
+        .register(Metrics.globalRegistry)
+        .increment()
+
+    fun recordRequestDuration(durationMs: Long, success: Boolean) {
+        Timer.builder("http_request_duration")
+            .description("Request duration with percentiles (50th, 90th, 95th, 99th)")
+            .tags("success", success.toString())
+            .publishPercentiles(0.5, 0.9, 0.95, 0.99)
+            .publishPercentileHistogram()
+            .register(Metrics.globalRegistry)
+            .record(durationMs, TimeUnit.MILLISECONDS)
+    }
+
+    fun get90thPercentileTimeout(accountName: String): Duration {
+        val timeoutMs = ACCOUNT_TIMEOUTS[accountName] ?: DEFAULT_TIMEOUT_MS
+        return Duration.ofMillis(timeoutMs)
+    }
+
+    companion object {
+        private const val DEFAULT_TIMEOUT_MS = 5000L
+
+        private val ACCOUNT_TIMEOUTS = mapOf(
+            "acc-7" to 1070L
+        )
+    }
 }

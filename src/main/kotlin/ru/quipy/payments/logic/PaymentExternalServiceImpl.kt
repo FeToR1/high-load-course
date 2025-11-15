@@ -11,6 +11,7 @@ import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
+import java.io.InterruptedIOException
 import java.time.Duration
 import java.util.*
 import kotlin.math.pow
@@ -39,12 +40,22 @@ class PaymentExternalSystemAdapterImpl(
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
 
-    private val client = OkHttpClient.Builder().build()
+    private val client: OkHttpClient by lazy {
+        val timeout = monitoringService.get90thPercentileTimeout(accountName)
+        OkHttpClient.Builder()
+            .callTimeout(timeout)
+            .connectTimeout(timeout)
+            .readTimeout(timeout)
+            .writeTimeout(timeout)
+            .build()
+    }
 
     override fun performPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
-        if (now() > deadline) {
+        val deadlineMs = deadline * 1000
+
+        if (now() > deadlineMs) {
             monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
             return
         }
@@ -65,13 +76,30 @@ class PaymentExternalSystemAdapterImpl(
                 post(emptyBody)
             }.build()
             for (i in 1..MAX_RETRIES) {
-                if (sendRequest(request, paymentId, transactionId)) {
-                    break
+                try {
+                    if (sendRequest(request, paymentId, transactionId)) {
+                        break
+                    }
+                } catch (e: InterruptedIOException) {
+                    logger.warn("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId, attempt $i/$MAX_RETRIES", e)
+                    
+                    if (i == MAX_RETRIES) {
+                        logger.error("[$accountName] Payment timeout after all retries for txId: $transactionId, payment: $paymentId")
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = "Request timeout after $MAX_RETRIES retries.")
+                        }
+                        monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
+                        return
+                    }
+                }
+
+                if (i > 1) {
+                    monitoringService.increaseRetryCounter()
                 }
 
                 val delay = (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(i)).toLong()
 
-                if (deadline < System.currentTimeMillis() + delay) {
+                if (deadlineMs < System.currentTimeMillis() + delay) {
                     monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
                     return
                 }
@@ -101,6 +129,8 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     fun sendRequest(request: Request, paymentId: UUID, transactionId: UUID): Boolean {
+        val startTime = System.currentTimeMillis()
+        
         client.newCall(request).execute().use { response ->
             monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
 
@@ -110,6 +140,9 @@ class PaymentExternalSystemAdapterImpl(
                 logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
                 ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
             }
+
+            val duration = System.currentTimeMillis() - startTime
+            monitoringService.recordRequestDuration(duration, body.result)
 
             logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
 
