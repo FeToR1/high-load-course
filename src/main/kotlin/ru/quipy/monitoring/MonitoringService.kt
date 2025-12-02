@@ -46,7 +46,7 @@ class MonitoringService() {
     }
 
     companion object {
-        private const val DEFAULT_TIMEOUT_MS = 5000L
+        private const val DEFAULT_TIMEOUT_MS = 15000L
 
         private val ACCOUNT_TIMEOUTS = mapOf(
             "acc-7" to 1070L
