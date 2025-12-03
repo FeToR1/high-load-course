@@ -2,18 +2,25 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import okhttp3.ConnectionPool
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
+import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.payments.api.PaymentAggregate
-import java.net.SocketTimeoutException
 import java.io.InterruptedIOException
+import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import kotlin.math.pow
 
 
