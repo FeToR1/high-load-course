@@ -3,11 +3,13 @@ package ru.quipy.payments.logic
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import okhttp3.ConnectionPool
+import okhttp3.ConnectionSpec
 import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody
+import okhttp3.TlsVersion
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
 import ru.quipy.common.utils.NamedThreadFactory
@@ -59,7 +61,7 @@ class PaymentExternalSystemAdapterImpl(
     )
 
     private val connectionSpecs = listOf(
-        ConnectionSpec.CLEARTEXT,  // Для HTTP (ваш случай)
+        ConnectionSpec.CLEARTEXT,
         ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
             .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2)
             .build()
