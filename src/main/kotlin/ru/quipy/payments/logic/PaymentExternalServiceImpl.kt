@@ -48,8 +48,8 @@ class PaymentExternalSystemAdapterImpl(
     private val accountName = properties.accountName
 
     private val dispatcher = Dispatcher().apply {
-        maxRequests = parallelRequests
-        maxRequestsPerHost = parallelRequests
+        maxRequests = parallelRequests()
+        maxRequestsPerHost = parallelRequests()
     }
 
     private val connectionPool = ConnectionPool(
