@@ -58,6 +58,13 @@ class PaymentExternalSystemAdapterImpl(
         timeUnit = TimeUnit.MINUTES,
     )
 
+    private val connectionSpecs = listOf(
+        ConnectionSpec.CLEARTEXT,  // Для HTTP (ваш случай)
+        ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+            .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2)
+            .build()
+    )
+
     private val client: OkHttpClient by lazy {
         val timeout = monitoringService.get90thPercentileTimeout(accountName)
         OkHttpClient.Builder()
@@ -66,6 +73,7 @@ class PaymentExternalSystemAdapterImpl(
             .dispatcher(dispatcher)
             .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
             .pingInterval(20, TimeUnit.SECONDS)
+            .connectionSpecs(connectionSpecs)
             
             .callTimeout(timeout)
             .connectTimeout(timeout)
