@@ -40,15 +40,38 @@ class PaymentExternalSystemAdapterImpl(
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
 
+    private val dispatcher = Dispatcher().apply {
+        maxRequests = parallelRequests
+        maxRequestsPerHost = parallelRequests
+    }
+
+    private val connectionPool = ConnectionPool(
+        maxIdleConnections = 50,
+        keepAliveDuration = 13,
+        timeUnit = TimeUnit.MINUTES,
+    )
+
     private val client: OkHttpClient by lazy {
         val timeout = monitoringService.get90thPercentileTimeout(accountName)
         OkHttpClient.Builder()
+            .retryOnConnectionFailure(true)
+            .connectionPool(connectionPool)
+            .dispatcher(dispatcher)
+            .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
+            .pingInterval(20, TimeUnit.SECONDS)
+            
             .callTimeout(timeout)
             .connectTimeout(timeout)
             .readTimeout(timeout)
             .writeTimeout(timeout)
             .build()
     }
+
+    private val databaseThreadPool = ScheduledThreadPoolExecutor(
+        20,
+        NamedThreadFactory("payment-submission-executor"),
+        CallerBlockingRejectedExecutionHandler()
+    )
 
     override fun performPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
@@ -64,8 +87,10 @@ class PaymentExternalSystemAdapterImpl(
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-        paymentESService.update(paymentId) {
-            it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+        databaseThreadPool.submit {
+            paymentESService.update(paymentId) {
+                it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+            }
         }
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
@@ -85,8 +110,10 @@ class PaymentExternalSystemAdapterImpl(
                     
                     if (i == MAX_RETRIES) {
                         logger.error("[$accountName] Payment timeout after all retries for txId: $transactionId, payment: $paymentId")
-                        paymentESService.update(paymentId) {
-                            it.logProcessing(false, now(), transactionId, reason = "Request timeout after $MAX_RETRIES retries.")
+                        databaseThreadPool.submit {
+                            paymentESService.update(paymentId) {
+                                it.logProcessing(false, now(), transactionId, reason = "Request timeout after $MAX_RETRIES retries.")
+                            }
                         }
                         monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
                         return
@@ -112,16 +139,19 @@ class PaymentExternalSystemAdapterImpl(
             when (e) {
                 is SocketTimeoutException -> {
                     logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+                    databaseThreadPool.submit {
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+                        }
                     }
                 }
 
                 else -> {
                     logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = e.message)
+                    databaseThreadPool.submit {
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = e.message)
+                        }
                     }
                 }
             }
@@ -151,10 +181,11 @@ class PaymentExternalSystemAdapterImpl(
 
             // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
             // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-            paymentESService.update(paymentId) {
-                it.logProcessing(body.result, now(), transactionId, reason = body.message)
+            databaseThreadPool.submit {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                }
             }
-
             return body.result
         }
     }
