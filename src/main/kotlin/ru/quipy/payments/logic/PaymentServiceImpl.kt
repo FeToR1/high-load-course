@@ -9,8 +9,8 @@ class PaymentSystemImpl(
 ) : PaymentService {
     private val accountProvider = AccountProvider(paymentAccounts)
 
-    override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
-        accountProvider.withAccount {
+    override suspend fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        accountProvider.withAccountAsync {
             it.performPayment(paymentId, amount, paymentStartedAt, deadline)
         }
     }

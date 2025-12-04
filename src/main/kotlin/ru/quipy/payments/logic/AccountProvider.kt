@@ -4,7 +4,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.asCoroutineDispatcher
 import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.SlidingWindowRateLimiter
-import ru.quipy.common.utils.BlockingRateLimiter
 import java.time.Duration
 import java.util.concurrent.Executors
 
@@ -13,7 +12,7 @@ class AccountProvider(
 ) {
     private val queueScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
 
-    private val rateLimiters: Map<String, BlockingRateLimiter> = paymentAccounts.associateBy(
+    private val rateLimiters: Map<String, SlidingWindowRateLimiter> = paymentAccounts.associateBy(
         { it.name() },
         { SlidingWindowRateLimiter(it.rateLimitPerSec().toLong(), Duration.ofSeconds(1)) }
     )
@@ -23,20 +22,20 @@ class AccountProvider(
         { OngoingWindow(it.parallelRequests()) }
     )
 
-    fun acquire(): PaymentExternalSystemAdapter {
+    suspend fun acquireAsync(): PaymentExternalSystemAdapter {
         val account = paymentAccounts[0]
-        ongoingWindows.getValue(account.name()).acquire()
-        rateLimiters.getValue(account.name()).tickBlocking()
+        ongoingWindows.getValue(account.name()).acquireAsync()
+        rateLimiters.getValue(account.name()).acquireAsync()
         return account
     }
 
-    fun release(accountName: String) {
+    suspend fun release(accountName: String) {
         ongoingWindows.getValue(accountName).release()
     }
 }
 
-fun AccountProvider.withAccount(block: (PaymentExternalSystemAdapter) -> Unit) {
-    val account = acquire()
+suspend fun AccountProvider.withAccountAsync(block: suspend (PaymentExternalSystemAdapter) -> Unit) {
+    val account = acquireAsync()
     block.invoke(account)
     release(account.name())
 }
