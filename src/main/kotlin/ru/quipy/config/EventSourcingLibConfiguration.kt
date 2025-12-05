@@ -1,11 +1,7 @@
 package ru.quipy.config
 
-import io.micrometer.core.instrument.Gauge
-import io.micrometer.core.instrument.Metrics
 import jakarta.annotation.PostConstruct
 import org.eclipse.jetty.http2.server.HTTP2CServerConnectionFactory
-import org.eclipse.jetty.server.ServerConnector
-import org.eclipse.jetty.util.thread.QueuedThreadPool
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.web.embedded.jetty.JettyServerCustomizer
@@ -16,8 +12,7 @@ import ru.quipy.core.EventSourcingServiceFactory
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.logic.PaymentAggregateState
 import ru.quipy.streams.AggregateEventStreamManager
-import java.util.*
-
+import java.util.UUID
 
 /**
  * This files contains some configurations that you might want to have in your project. Some configurations are
@@ -74,34 +69,11 @@ class EventSourcingLibConfiguration {
     fun jettyServerCustomizer(): JettyServletWebServerFactory {
         val jettyServletWebServerFactory = JettyServletWebServerFactory()
 
-        jettyServletWebServerFactory.addServerCustomizers({ server ->
-            val threadPool = server.threadPool as QueuedThreadPool
-            threadPool.minThreads = 200
-            threadPool.maxThreads = 2000
-            threadPool.idleTimeout = 60000
-            threadPool.isDetailedDump = true
+        val c = JettyServerCustomizer {
+            (it.connectors[0].getConnectionFactory("h2c") as HTTP2CServerConnectionFactory).maxConcurrentStreams = 20_000
+        }
 
-            server.connectors.forEach { connector ->
-                if (connector is ServerConnector) {
-                    connector.connectionFactories.forEach { c ->
-                        if (c is HTTP2CServerConnectionFactory) {
-                            c.maxConcurrentStreams = 20_000
-                        }
-                    }
-                }
-            }
-
-            Gauge.builder("jetty_active_threads", threadPool::getBusyThreads)
-                .description("Jetty active threads")
-                .register(Metrics.globalRegistry)
-            Gauge.builder("jetty_idle_threads", threadPool::getIdleThreads)
-                .description("Jetty idle threads")
-                .register(Metrics.globalRegistry)
-            Gauge.builder("jetty_total_threads", threadPool::getThreads)
-                .description("Jetty total threads")
-                .register(Metrics.globalRegistry)
-        })
-
+        jettyServletWebServerFactory.serverCustomizers.add(c)
         return jettyServletWebServerFactory
     }
 }

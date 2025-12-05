@@ -63,7 +63,7 @@ class PaymentExternalSystemAdapterImpl(
         Gauge.builder("http_client_active_connections", (httpClientExecutor as ThreadPoolExecutor)::getActiveCount)
             .description("Http client active connections")
             .register(Metrics.globalRegistry)
-        Gauge.builder("http_client_idle_connections", httpClientExecutor::getPoolSize)
+        Gauge.builder("http_client_total_connections", httpClientExecutor::getPoolSize)
             .description("Http client idle connections")
             .register(Metrics.globalRegistry)
     }
