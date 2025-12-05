@@ -5,11 +5,9 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
 import jakarta.annotation.PostConstruct
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.withContext
-import kotlin.coroutines.CoroutineContext
 import org.slf4j.LoggerFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.monitoring.MonitoringService
@@ -21,11 +19,12 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.net.http.HttpTimeoutException
 import java.time.Duration
-import java.util.*
+import java.util.UUID
 import java.util.concurrent.CompletionException
 import java.util.concurrent.Executors
+import java.util.concurrent.ThreadPoolExecutor
+import kotlin.coroutines.CoroutineContext
 import kotlin.math.pow
-
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -61,23 +60,10 @@ class PaymentExternalSystemAdapterImpl(
 
     @PostConstruct
     private fun registerPoolSizeMetrics() {
-        Gauge.builder("http_client_active_connections") {
-            if (httpClientExecutor is java.util.concurrent.ThreadPoolExecutor) {
-                (httpClientExecutor as java.util.concurrent.ThreadPoolExecutor).activeCount
-            } else {
-                0
-            }
-        }
+        Gauge.builder("http_client_active_connections", (httpClientExecutor as ThreadPoolExecutor)::getActiveCount)
             .description("Http client active connections")
             .register(Metrics.globalRegistry)
-        Gauge.builder("http_client_idle_connections") {
-            if (httpClientExecutor is java.util.concurrent.ThreadPoolExecutor) {
-                val tpe = httpClientExecutor as java.util.concurrent.ThreadPoolExecutor
-                tpe.poolSize - tpe.activeCount
-            } else {
-                0
-            }
-        }
+        Gauge.builder("http_client_idle_connections", httpClientExecutor::getPoolSize)
             .description("Http client idle connections")
             .register(Metrics.globalRegistry)
     }
@@ -111,7 +97,7 @@ class PaymentExternalSystemAdapterImpl(
                 .POST(HttpRequest.BodyPublishers.noBody())
                 .timeout(timeout)
                 .build()
-            
+
             for (i in 1..MAX_RETRIES) {
                 try {
                     if (sendRequest(request, paymentId, transactionId, ioContext)) {
@@ -184,10 +170,10 @@ class PaymentExternalSystemAdapterImpl(
 
     suspend fun sendRequest(request: HttpRequest, paymentId: UUID, transactionId: UUID, ioContext: CoroutineContext): Boolean {
         val startTime = System.currentTimeMillis()
-        
+
         // Асинхронный запрос с использованием HttpClient
         val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
-        
+
         monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
 
         val body = try {
@@ -227,7 +213,6 @@ class PaymentExternalSystemAdapterImpl(
     override fun name() = properties.accountName
 
     override fun averageProcessingTime() = properties.averageProcessingTime
-
 }
 
 fun now() = System.currentTimeMillis()
