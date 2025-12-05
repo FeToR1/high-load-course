@@ -2,6 +2,9 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.Metrics
+import jakarta.annotation.PostConstruct
 import okhttp3.ConnectionPool
 import okhttp3.ConnectionSpec
 import okhttp3.Dispatcher
@@ -20,11 +23,10 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
 import java.time.Duration
-import java.util.*
+import java.util.UUID
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import kotlin.math.pow
-
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -76,7 +78,7 @@ class PaymentExternalSystemAdapterImpl(
             .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
             .pingInterval(20, TimeUnit.SECONDS)
             .connectionSpecs(connectionSpecs)
-            
+
             .callTimeout(timeout)
             .connectTimeout(timeout)
             .readTimeout(timeout)
@@ -89,6 +91,22 @@ class PaymentExternalSystemAdapterImpl(
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
+
+    @PostConstruct
+    private fun registerPoolSizeMetrics() {
+        Gauge.builder("db_total_threads", databaseThreadPool::getActiveCount)
+            .description("Db total threads")
+            .register(Metrics.globalRegistry)
+        Gauge.builder("db_active_threads", databaseThreadPool::getPoolSize)
+            .description("Db active threads")
+            .register(Metrics.globalRegistry)
+        Gauge.builder("http_client_active_connections", connectionPool::connectionCount)
+            .description("Http client active connections")
+            .register(Metrics.globalRegistry)
+        Gauge.builder("http_client_idle_connections", connectionPool::connectionCount)
+            .description("Http client idle connections")
+            .register(Metrics.globalRegistry)
+    }
 
     override fun performPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
@@ -124,7 +142,7 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 } catch (e: InterruptedIOException) {
                     logger.warn("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId, attempt $i/$MAX_RETRIES", e)
-                    
+
                     if (i == MAX_RETRIES) {
                         logger.error("[$accountName] Payment timeout after all retries for txId: $transactionId, payment: $paymentId")
                         databaseThreadPool.submit {
@@ -177,7 +195,7 @@ class PaymentExternalSystemAdapterImpl(
 
     fun sendRequest(request: Request, paymentId: UUID, transactionId: UUID): Boolean {
         val startTime = System.currentTimeMillis()
-        
+
         client.newCall(request).execute().use { response ->
             monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
 
@@ -218,7 +236,6 @@ class PaymentExternalSystemAdapterImpl(
     override fun name() = properties.accountName
 
     override fun averageProcessingTime() = properties.averageProcessingTime
-
 }
 
 fun now() = System.currentTimeMillis()
