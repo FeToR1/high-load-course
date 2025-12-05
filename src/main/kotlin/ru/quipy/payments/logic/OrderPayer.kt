@@ -36,9 +36,16 @@ class OrderPayer(
     @Autowired
     private lateinit var paymentService: PaymentService
 
+    private val threadPoolSize = paymentAccounts.maxOfOrNull { account ->
+        minOf(
+            account.parallelRequests(),
+            (account.rateLimitPerSec() / account.averageProcessingTime().toMillis() * 1000).toInt()
+        )
+    } ?: 64
+
     private val paymentExecutor = ThreadPoolExecutor(
-        64,
-        64,
+        threadPoolSize,
+        threadPoolSize,
         0,
         TimeUnit.SECONDS,
         LinkedBlockingQueue(1_000),

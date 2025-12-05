@@ -9,6 +9,8 @@ import kotlinx.coroutines.future.await
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import ru.quipy.core.EventSourcingService
+import ru.quipy.common.utils.OngoingWindow
+import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.payments.api.PaymentAggregate
@@ -31,7 +33,9 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
-    private val monitoringService: MonitoringService
+    private val monitoringService: MonitoringService,
+    private val ongoingWindow: OngoingWindow,
+    private val rateLimiter: SlidingWindowRateLimiter
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -67,14 +71,18 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     override suspend fun performPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, ioContext: CoroutineContext) {
-        logger.warn("[$accountName] Submitting payment request for payment $paymentId")
+        ongoingWindow.acquireAsync()
+        rateLimiter.acquireAsync()
+        
+        try {
+            logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
-        val deadlineMs = deadline * 1000
+            val deadlineMs = deadline * 1000
 
-        if (now() > deadlineMs) {
-            monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
-            return
-        }
+            if (now() > deadlineMs) {
+                monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
+                return
+            }
 
         val transactionId = UUID.randomUUID()
 
@@ -136,13 +144,16 @@ class PaymentExternalSystemAdapterImpl(
                     it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
                 }
             }
-        } catch (e: Exception) {
-            logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-            withContext(ioContext) {
-                paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId, reason = e.message)
+            } catch (e: Exception) {
+                logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+                withContext(ioContext) {
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(false, now(), transactionId, reason = e.message)
+                    }
                 }
             }
+        } finally {
+            ongoingWindow.release()
         }
     }
 
