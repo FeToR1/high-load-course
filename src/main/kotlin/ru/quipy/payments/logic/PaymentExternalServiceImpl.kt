@@ -47,6 +47,7 @@ class PaymentExternalSystemAdapterImpl(
     private val client: HttpClient by lazy {
         HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_2)
+            .executor(Executors.newFixedThreadPool(100))
             .connectTimeout(monitoringService.get90thPercentileTimeout(accountName))
             .build()
     }
