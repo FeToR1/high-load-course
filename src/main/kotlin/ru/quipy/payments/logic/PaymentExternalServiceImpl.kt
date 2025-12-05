@@ -71,18 +71,14 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     override suspend fun performPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, ioContext: CoroutineContext) {
-        ongoingWindow.acquireAsync()
-        rateLimiter.acquireAsync()
-        
-        try {
-            logger.warn("[$accountName] Submitting payment request for payment $paymentId")
+        logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
-            val deadlineMs = deadline * 1000
+        val deadlineMs = deadline * 1000
 
-            if (now() > deadlineMs) {
-                monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
-                return
-            }
+        if (now() > deadlineMs) {
+            monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
+            return
+        }
 
         val transactionId = UUID.randomUUID()
 
@@ -144,16 +140,13 @@ class PaymentExternalSystemAdapterImpl(
                     it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
                 }
             }
-            } catch (e: Exception) {
-                logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-                withContext(ioContext) {
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = e.message)
-                    }
+        } catch (e: Exception) {
+            logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+            withContext(ioContext) {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId, reason = e.message)
                 }
             }
-        } finally {
-            ongoingWindow.release()
         }
     }
 
@@ -178,10 +171,14 @@ class PaymentExternalSystemAdapterImpl(
     }
 
     suspend fun sendRequest(request: HttpRequest, paymentId: UUID, transactionId: UUID, ioContext: CoroutineContext): Boolean {
-        val startTime = System.currentTimeMillis()
+        ongoingWindow.acquireAsync()
+        rateLimiter.acquireAsync()
+        
+        try {
+            val startTime = System.currentTimeMillis()
 
-        // Асинхронный запрос с использованием HttpClient
-        val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
+            // Асинхронный запрос с использованием HttpClient
+            val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
 
         monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
 
@@ -206,9 +203,10 @@ class PaymentExternalSystemAdapterImpl(
             paymentESService.update(paymentId) {
                 it.logProcessing(body.result, now(), transactionId, reason = body.message)
             }
+            return body.result
+        } finally {
+            ongoingWindow.release()
         }
-
-        return body.result
     }
 
     override fun price() = properties.price
