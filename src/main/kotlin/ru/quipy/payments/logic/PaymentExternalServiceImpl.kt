@@ -2,20 +2,31 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.Metrics
+import jakarta.annotation.PostConstruct
+import okhttp3.ConnectionPool
+import okhttp3.ConnectionSpec
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody
+import okhttp3.TlsVersion
 import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
+import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.payments.api.PaymentAggregate
-import java.net.SocketTimeoutException
 import java.io.InterruptedIOException
+import java.net.SocketTimeoutException
 import java.time.Duration
-import java.util.*
+import java.util.UUID
+import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import kotlin.math.pow
-
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -40,14 +51,61 @@ class PaymentExternalSystemAdapterImpl(
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
 
+    private val dispatcher = Dispatcher().apply {
+        maxRequests = parallelRequests()
+        maxRequestsPerHost = parallelRequests()
+    }
+
+    private val connectionPool = ConnectionPool(
+        maxIdleConnections = 50,
+        keepAliveDuration = 13,
+        timeUnit = TimeUnit.MINUTES,
+    )
+
+    private val connectionSpecs = listOf(
+        ConnectionSpec.CLEARTEXT,
+        ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+            .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2)
+            .build()
+    )
+
     private val client: OkHttpClient by lazy {
         val timeout = monitoringService.get90thPercentileTimeout(accountName)
         OkHttpClient.Builder()
+            .retryOnConnectionFailure(true)
+            .connectionPool(connectionPool)
+            .dispatcher(dispatcher)
+            .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
+            .pingInterval(20, TimeUnit.SECONDS)
+            .connectionSpecs(connectionSpecs)
+
             .callTimeout(timeout)
             .connectTimeout(timeout)
             .readTimeout(timeout)
             .writeTimeout(timeout)
             .build()
+    }
+
+    private val databaseThreadPool = ScheduledThreadPoolExecutor(
+        20,
+        NamedThreadFactory("payment-submission-executor"),
+        CallerBlockingRejectedExecutionHandler()
+    )
+
+    @PostConstruct
+    private fun registerPoolSizeMetrics() {
+        Gauge.builder("db_total_threads", databaseThreadPool::getActiveCount)
+            .description("Db total threads")
+            .register(Metrics.globalRegistry)
+        Gauge.builder("db_active_threads", databaseThreadPool::getPoolSize)
+            .description("Db active threads")
+            .register(Metrics.globalRegistry)
+        Gauge.builder("http_client_active_connections", connectionPool::connectionCount)
+            .description("Http client active connections")
+            .register(Metrics.globalRegistry)
+        Gauge.builder("http_client_idle_connections", connectionPool::connectionCount)
+            .description("Http client idle connections")
+            .register(Metrics.globalRegistry)
     }
 
     override fun performPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
@@ -64,8 +122,10 @@ class PaymentExternalSystemAdapterImpl(
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-        paymentESService.update(paymentId) {
-            it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+        databaseThreadPool.submit {
+            paymentESService.update(paymentId) {
+                it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+            }
         }
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
@@ -82,11 +142,13 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 } catch (e: InterruptedIOException) {
                     logger.warn("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId, attempt $i/$MAX_RETRIES", e)
-                    
+
                     if (i == MAX_RETRIES) {
                         logger.error("[$accountName] Payment timeout after all retries for txId: $transactionId, payment: $paymentId")
-                        paymentESService.update(paymentId) {
-                            it.logProcessing(false, now(), transactionId, reason = "Request timeout after $MAX_RETRIES retries.")
+                        databaseThreadPool.submit {
+                            paymentESService.update(paymentId) {
+                                it.logProcessing(false, now(), transactionId, reason = "Request timeout after $MAX_RETRIES retries.")
+                            }
                         }
                         monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
                         return
@@ -112,16 +174,19 @@ class PaymentExternalSystemAdapterImpl(
             when (e) {
                 is SocketTimeoutException -> {
                     logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+                    databaseThreadPool.submit {
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+                        }
                     }
                 }
 
                 else -> {
                     logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = e.message)
+                    databaseThreadPool.submit {
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = e.message)
+                        }
                     }
                 }
             }
@@ -130,7 +195,7 @@ class PaymentExternalSystemAdapterImpl(
 
     fun sendRequest(request: Request, paymentId: UUID, transactionId: UUID): Boolean {
         val startTime = System.currentTimeMillis()
-        
+
         client.newCall(request).execute().use { response ->
             monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
 
@@ -151,10 +216,11 @@ class PaymentExternalSystemAdapterImpl(
 
             // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
             // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-            paymentESService.update(paymentId) {
-                it.logProcessing(body.result, now(), transactionId, reason = body.message)
+            databaseThreadPool.submit {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                }
             }
-
             return body.result
         }
     }
@@ -170,7 +236,6 @@ class PaymentExternalSystemAdapterImpl(
     override fun name() = properties.accountName
 
     override fun averageProcessingTime() = properties.averageProcessingTime
-
 }
 
 fun now() = System.currentTimeMillis()

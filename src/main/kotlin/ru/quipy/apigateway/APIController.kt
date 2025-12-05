@@ -1,21 +1,28 @@
 package ru.quipy.apigateway
 
 import org.slf4j.LoggerFactory
-import org.springframework.web.bind.annotation.*
+import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
+import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.bind.annotation.RestController
 import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.RateLimitExceededException
+import ru.quipy.monitoring.MonitoringService
+import ru.quipy.monitoring.RequestType
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import ru.quipy.payments.logic.PaymentExternalSystemAdapter
 import java.time.Duration
-import java.util.*
+import java.util.UUID
 import kotlin.math.min
 
 @RestController
 class APIController(
     paymentAccounts: List<PaymentExternalSystemAdapter>,
     private val orderRepository: OrderRepository,
-    private val orderPayer: OrderPayer
+    private val orderPayer: OrderPayer,
+    private var monitoringService: MonitoringService
 ) {
     @Volatile
     private var bucket: LeakingBucketRateLimiter? = null
@@ -61,6 +68,8 @@ class APIController(
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
+        monitoringService.increaseRequestsCounter(RequestType.INCOMING)
+
         initBucketOnce(deadline)
 
         if (!bucket!!.tick()) {

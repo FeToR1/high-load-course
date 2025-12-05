@@ -1,5 +1,8 @@
 package ru.quipy.payments.logic
 
+import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.Metrics
+import jakarta.annotation.PostConstruct
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -9,7 +12,7 @@ import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.common.utils.RateLimitExceededException
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
-import java.util.*
+import java.util.UUID
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -38,6 +41,16 @@ class OrderPayer(
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
+
+    @PostConstruct
+    fun registerPoolSizeMetrics() {
+        Gauge.builder("payment_executor_active_threads", paymentExecutor::getActiveCount)
+            .description("Payment exec active threads")
+            .register(Metrics.globalRegistry)
+        Gauge.builder("payment_executor_total_threads", paymentExecutor::getPoolSize)
+            .description("Payment exec total threads")
+            .register(Metrics.globalRegistry)
+    }
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()

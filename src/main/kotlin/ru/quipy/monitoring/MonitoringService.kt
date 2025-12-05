@@ -30,26 +30,33 @@ class MonitoringService() {
         .register(Metrics.globalRegistry)
         .increment()
 
-    fun recordRequestDuration(durationMs: Long, success: Boolean) {
-        Timer.builder("http_request_duration")
-            .description("Request duration with percentiles (50th, 90th, 95th, 99th)")
-            .tags("success", success.toString())
-            .publishPercentiles(0.5, 0.9, 0.95, 0.99)
-            .publishPercentileHistogram()
-            .register(Metrics.globalRegistry)
-            .record(durationMs, TimeUnit.MILLISECONDS)
-    }
+    fun recordRequestDuration(durationMs: Long, success: Boolean) = Timer
+        .builder("http_request_duration")
+        .description("Request duration with percentiles (50th, 90th, 95th, 99th)")
+        .tags("success", success.toString())
+        .publishPercentiles(0.5, 0.9, 0.95, 0.99)
+        .publishPercentileHistogram()
+        .register(Metrics.globalRegistry)
+        .record(durationMs, TimeUnit.MILLISECONDS)
 
     fun get90thPercentileTimeout(accountName: String): Duration {
         val timeoutMs = ACCOUNT_TIMEOUTS[accountName] ?: DEFAULT_TIMEOUT_MS
         return Duration.ofMillis(timeoutMs)
     }
 
+    // fun recordPoolSize(poolName: String, poolSize: Int) = Timer
+    //     .builder("pool_size")
+    //     .description("Number of pool threads/connections in use")
+    //     .tags("poolName", poolName)
+    //     .register(Metrics.globalRegistry)
+    //     .record {  }
+
     companion object {
-        private const val DEFAULT_TIMEOUT_MS = 5000L
+        private const val DEFAULT_TIMEOUT_MS = 15000L
 
         private val ACCOUNT_TIMEOUTS = mapOf(
-            "acc-7" to 1070L
+            "acc-7" to 1070L,
+            "acc-12" to 4900L,
         )
     }
 }
