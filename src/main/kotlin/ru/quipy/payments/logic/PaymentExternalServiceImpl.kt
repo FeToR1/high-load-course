@@ -2,6 +2,9 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.Metrics
+import jakarta.annotation.PostConstruct
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.withContext
@@ -45,12 +48,37 @@ class PaymentExternalSystemAdapterImpl(
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
 
+    private val httpClientExecutor = Executors.newFixedThreadPool(100)
+
     private val client: HttpClient by lazy {
         HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_2)
-            .executor(Executors.newFixedThreadPool(100))
+            .executor(httpClientExecutor)
             .connectTimeout(monitoringService.get90thPercentileTimeout(accountName))
             .build()
+    }
+
+    @PostConstruct
+    private fun registerPoolSizeMetrics() {
+        Gauge.builder("http_client_active_connections") {
+            if (httpClientExecutor is java.util.concurrent.ThreadPoolExecutor) {
+                (httpClientExecutor as java.util.concurrent.ThreadPoolExecutor).activeCount
+            } else {
+                0
+            }
+        }
+            .description("Http client active connections")
+            .register(Metrics.globalRegistry)
+        Gauge.builder("http_client_idle_connections") {
+            if (httpClientExecutor is java.util.concurrent.ThreadPoolExecutor) {
+                val tpe = httpClientExecutor as java.util.concurrent.ThreadPoolExecutor
+                tpe.poolSize - tpe.activeCount
+            } else {
+                0
+            }
+        }
+            .description("Http client idle connections")
+            .register(Metrics.globalRegistry)
     }
 
     override suspend fun performPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, ioContext: CoroutineContext) {

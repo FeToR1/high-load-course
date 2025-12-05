@@ -61,6 +61,8 @@ class APIController(
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
+        monitoringService.increaseRequestsCounter(RequestType.INCOMING)
+
         initBucketOnce(deadline)
 
         if (!bucket!!.tick()) {

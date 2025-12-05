@@ -1,5 +1,8 @@
 package ru.quipy.payments.logic
 
+import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.Metrics
+import jakarta.annotation.PostConstruct
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -33,7 +36,7 @@ class OrderPayer(
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val threadPool = ThreadPoolExecutor(
+    private val paymentExecutor = ThreadPoolExecutor(
         paymentAccounts.maxOf { it.parallelRequests() },
         paymentAccounts.maxOf { it.parallelRequests() },
         0L,
@@ -43,12 +46,22 @@ class OrderPayer(
         CallerBlockingRejectedExecutionHandler()
     )
 
-    private val scope = CoroutineScope(threadPool.asCoroutineDispatcher() + SupervisorJob())
+    private val scope = CoroutineScope(paymentExecutor.asCoroutineDispatcher() + SupervisorJob())
+
+    @PostConstruct
+    fun registerPoolSizeMetrics() {
+        Gauge.builder("payment_executor_active_threads", paymentExecutor::getActiveCount)
+            .description("Payment exec active threads")
+            .register(Metrics.globalRegistry)
+        Gauge.builder("payment_executor_total_threads", paymentExecutor::getPoolSize)
+            .description("Payment exec total threads")
+            .register(Metrics.globalRegistry)
+    }
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
 
-        if (threadPool.queue.remainingCapacity() == 0) {
+        if (paymentExecutor.queue.remainingCapacity() == 0) {
             throw RateLimitExceededException(1000)
         }
 
