@@ -1,5 +1,12 @@
 package ru.quipy.payments.logic
 
+import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.Metrics
+import jakarta.annotation.PostConstruct
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -29,15 +36,29 @@ class OrderPayer(
     @Autowired
     private lateinit var paymentService: PaymentService
 
+    private val threadPoolSize = 64
+
     private val paymentExecutor = ThreadPoolExecutor(
-        paymentAccounts.maxOf { it.parallelRequests() },
-        paymentAccounts.maxOf { it.parallelRequests() },
-        0L,
-        TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(300),
+        threadPoolSize,
+        threadPoolSize,
+        0,
+        TimeUnit.SECONDS,
+        LinkedBlockingQueue(1_000),
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
+
+    private val scope = CoroutineScope(paymentExecutor.asCoroutineDispatcher() + SupervisorJob())
+
+    @PostConstruct
+    fun registerPoolSizeMetrics() {
+        Gauge.builder("payment_executor_active_threads", paymentExecutor::getActiveCount)
+            .description("Payment exec active threads")
+            .register(Metrics.globalRegistry)
+        Gauge.builder("payment_executor_total_threads", paymentExecutor::getPoolSize)
+            .description("Payment exec total threads")
+            .register(Metrics.globalRegistry)
+    }
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
@@ -46,7 +67,7 @@ class OrderPayer(
             throw RateLimitExceededException(1000)
         }
 
-        paymentExecutor.submit {
+        scope.launch {
             val createdEvent = paymentESService.create {
                 it.create(
                     paymentId,
@@ -56,9 +77,9 @@ class OrderPayer(
             }
             logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
-            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline, coroutineContext)
         }
+
         return createdAt
     }
-
 }
