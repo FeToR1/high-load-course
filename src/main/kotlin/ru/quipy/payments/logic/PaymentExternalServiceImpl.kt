@@ -6,6 +6,7 @@ import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
 import jakarta.annotation.PostConstruct
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.CoroutineContext
@@ -134,7 +135,7 @@ class PaymentExternalSystemAdapterImpl(
                 }
 
                 if (i < MAX_RETRIES) {
-                    Thread.sleep(delay)
+                    delay(delay)
                 }
             }
         } catch (e: HttpTimeoutException) {
