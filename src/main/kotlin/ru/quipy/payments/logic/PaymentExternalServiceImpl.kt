@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
-import jakarta.annotation.PostConstruct
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.withContext
@@ -58,8 +57,7 @@ class PaymentExternalSystemAdapterImpl(
             .build()
     }
 
-    @PostConstruct
-    private fun registerPoolSizeMetrics() {
+    init {
         Gauge.builder("http_client_active_connections", (httpClientExecutor as ThreadPoolExecutor)::getActiveCount)
             .description("Http client active connections")
             .register(Metrics.globalRegistry)
