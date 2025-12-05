@@ -1,9 +1,8 @@
 package ru.quipy.payments.logic
 
-import kotlinx.coroutines.CoroutineContext
 import org.springframework.stereotype.Service
 import java.util.*
-import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.CoroutineContext
 
 @Service
 class PaymentSystemImpl(

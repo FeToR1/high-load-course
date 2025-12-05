@@ -1,8 +1,8 @@
 package ru.quipy.payments.logic
 
-import kotlinx.coroutines.CoroutineContext
 import java.time.Duration
 import java.util.*
+import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 
 interface PaymentService {
