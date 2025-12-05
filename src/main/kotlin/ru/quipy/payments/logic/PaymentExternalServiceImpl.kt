@@ -2,6 +2,7 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import kotlinx.coroutines.CoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.withContext
@@ -50,7 +51,7 @@ class PaymentExternalSystemAdapterImpl(
             .build()
     }
 
-    override suspend fun performPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+    override suspend fun performPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, ioContext: CoroutineContext) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val deadlineMs = deadline * 1000
@@ -64,7 +65,7 @@ class PaymentExternalSystemAdapterImpl(
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-        withContext(Dispatchers.IO) {
+        withContext(ioContext) {
             paymentESService.update(paymentId) {
                 it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
             }
@@ -82,34 +83,13 @@ class PaymentExternalSystemAdapterImpl(
             
             for (i in 1..MAX_RETRIES) {
                 try {
-                    if (sendRequest(request, paymentId, transactionId)) {
+                    if (sendRequest(request, paymentId, transactionId, ioContext)) {
                         break
                     }
-                } catch (e: Exception) {
-                    val isTimeout = e is HttpTimeoutException ||
-                                   (e is CompletionException && e.cause is HttpTimeoutException)
-                    
-                    if (isTimeout) {
-                        logger.warn("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId, attempt $i/$MAX_RETRIES", e)
-
-                        if (i == MAX_RETRIES) {
-                            logger.error("[$accountName] Payment timeout after all retries for txId: $transactionId, payment: $paymentId")
-                            withContext(Dispatchers.IO) {
-                                paymentESService.update(paymentId) {
-                                    it.logProcessing(
-                                        false,
-                                        now(),
-                                        transactionId,
-                                        reason = "Request timeout after $MAX_RETRIES retries."
-                                    )
-                                }
-                            }
-                            monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
-                            return
-                        }
-                    } else {
-                        throw e
-                    }
+                } catch (e: HttpTimeoutException) {
+                    handleTimeout(e, i, paymentId, transactionId, ioContext)
+                } catch (e: CompletionException) {
+                    handleTimeout(e, i, paymentId, transactionId, ioContext)
                 }
 
                 if (i > 1) {
@@ -127,29 +107,51 @@ class PaymentExternalSystemAdapterImpl(
                     Thread.sleep(delay)
                 }
             }
-        } catch (e: Exception) {
-            val isTimeout = e is HttpTimeoutException ||
-                           (e is CompletionException && e.cause is HttpTimeoutException)
-            
-            if (isTimeout) {
-                logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                withContext(Dispatchers.IO) {
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                    }
+        } catch (e: HttpTimeoutException) {
+            logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
+            withContext(ioContext) {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
                 }
-            } else {
-                logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-                withContext(Dispatchers.IO) {
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = e.message)
-                    }
+            }
+        } catch (e: CompletionException) {
+            logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
+            withContext(ioContext) {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+                }
+            }
+        } catch (e: Exception) {
+            logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+            withContext(ioContext) {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId, reason = e.message)
                 }
             }
         }
     }
 
-    suspend fun sendRequest(request: HttpRequest, paymentId: UUID, transactionId: UUID): Boolean {
+    private suspend fun handleTimeout(e: Exception, attempt: Int, paymentId: UUID, transactionId: UUID, ioContext: CoroutineContext) {
+        logger.warn("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId, attempt $attempt/$MAX_RETRIES", e)
+
+        if (attempt == MAX_RETRIES) {
+            logger.error("[$accountName] Payment timeout after all retries for txId: $transactionId, payment: $paymentId")
+            withContext(ioContext) {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(
+                        false,
+                        now(),
+                        transactionId,
+                        reason = "Request timeout after $MAX_RETRIES retries."
+                    )
+                }
+            }
+            monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
+            return
+        }
+    }
+
+    suspend fun sendRequest(request: HttpRequest, paymentId: UUID, transactionId: UUID, ioContext: CoroutineContext): Boolean {
         val startTime = System.currentTimeMillis()
         
         // Асинхронный запрос с использованием HttpClient
@@ -174,7 +176,7 @@ class PaymentExternalSystemAdapterImpl(
 
         // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
         // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-        withContext(Dispatchers.IO) {
+        withContext(ioContext) {
             paymentESService.update(paymentId) {
                 it.logProcessing(body.result, now(), transactionId, reason = body.message)
             }
