@@ -70,7 +70,13 @@ class PaymentExternalSystemAdapterImpl(
             .register(Metrics.globalRegistry)
     }
 
-    override suspend fun performPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, ioContext: CoroutineContext) {
+    override suspend fun performPayment(
+        paymentId: UUID,
+        amount: Int,
+        paymentStartedAt: Long,
+        deadline: Long,
+        ioContext: CoroutineContext
+    ) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val deadlineMs = deadline * 1000
@@ -150,8 +156,17 @@ class PaymentExternalSystemAdapterImpl(
         }
     }
 
-    private suspend fun handleTimeout(e: Exception, attempt: Int, paymentId: UUID, transactionId: UUID, ioContext: CoroutineContext) {
-        logger.warn("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId, attempt $attempt/$MAX_RETRIES", e)
+    private suspend fun handleTimeout(
+        e: Exception,
+        attempt: Int,
+        paymentId: UUID,
+        transactionId: UUID,
+        ioContext: CoroutineContext
+    ) {
+        logger.warn(
+            "[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId, attempt $attempt/$MAX_RETRIES",
+            e
+        )
 
         if (attempt == MAX_RETRIES) {
             logger.error("[$accountName] Payment timeout after all retries for txId: $transactionId, payment: $paymentId")
@@ -170,43 +185,50 @@ class PaymentExternalSystemAdapterImpl(
         }
     }
 
-    suspend fun sendRequest(request: HttpRequest, paymentId: UUID, transactionId: UUID, ioContext: CoroutineContext): Boolean {
-        ongoingWindow.acquireAsync()
-        rateLimiter.acquireAsync()
-        
+    suspend fun sendRequest(
+        request: HttpRequest,
+        paymentId: UUID,
+        transactionId: UUID,
+        ioContext: CoroutineContext
+    ): Boolean {
         try {
+            ongoingWindow.acquireAsync()
+            rateLimiter.acquireAsync()
+
             val startTime = System.currentTimeMillis()
 
-            // Асинхронный запрос с использованием HttpClient
             val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
 
-        monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
+            monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
 
-        val body = try {
-            mapper.readValue(response.body(), ExternalSysResponse::class.java)
-        } catch (e: Exception) {
-            logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.statusCode()}, reason: ${response.body()}")
-            ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
-        }
-
-        val duration = System.currentTimeMillis() - startTime
-        monitoringService.recordRequestDuration(duration, body.result)
-
-        logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-
-        val requestType = if (body.result) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
-        monitoringService.increaseRequestsCounter(requestType)
-
-        // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
-        // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-        withContext(ioContext) {
-            paymentESService.update(paymentId) {
-                it.logProcessing(body.result, now(), transactionId, reason = body.message)
+            val body = try {
+                mapper.readValue(response.body(), ExternalSysResponse::class.java)
+            } catch (e: Exception) {
+                logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.statusCode()}, reason: ${response.body()}")
+                ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
             }
-            return body.result
+
+            val duration = System.currentTimeMillis() - startTime
+            monitoringService.recordRequestDuration(duration, body.result)
+
+            logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+
+            val requestType = if (body.result) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
+            monitoringService.increaseRequestsCounter(requestType)
+
+            // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
+            // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
+            withContext(ioContext) {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                }
+                return@withContext body.result
+            }
         } finally {
             ongoingWindow.release()
         }
+
+        return false
     }
 
     override fun price() = properties.price
