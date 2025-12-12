@@ -22,13 +22,14 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
 @Service
-class OrderPayer(
-    paymentAccounts: List<PaymentExternalSystemAdapter>
+    private val paymentAccounts: List<PaymentExternalSystemAdapter>
 ) {
 
     companion object {
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
     }
+
+    val processTime = paymentAccounts[0].averageProcessingTime().toMillis()
 
     @Autowired
     private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
@@ -64,7 +65,7 @@ class OrderPayer(
         val createdAt = System.currentTimeMillis()
 
         if (paymentExecutor.queue.remainingCapacity() == 0) {
-            throw RateLimitExceededException(1000)
+            throw RateLimitExceededException(processTime * 5)
         }
 
         scope.launch {
