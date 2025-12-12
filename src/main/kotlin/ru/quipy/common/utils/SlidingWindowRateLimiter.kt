@@ -21,13 +21,14 @@ class SlidingWindowRateLimiter(
 
     private val sum = AtomicLong(0)
     private val queue = PriorityBlockingQueue<Measure>(10_000)
+    private val windowNanos = window.toNanos()
 
     override fun tick(): Boolean {
         while (true) {
             val curSum = sum.get()
             if (curSum >= rate) return false
             if (sum.compareAndSet(curSum, curSum + 1)) {
-                queue.add(Measure(1, System.currentTimeMillis()))
+                queue.add(Measure(1, System.nanoTime()))
                 return true
             }
         }
@@ -59,13 +60,15 @@ class SlidingWindowRateLimiter(
     private val releaseJob = rateLimiterScope.launch {
         while (true) {
             val head = queue.peek()
-            val winStart = System.currentTimeMillis() - window.toMillis()
+            val winStart = System.nanoTime() - windowNanos
             if (head == null) {
                 delay(1L)
                 continue
             }
             if (head.timestamp > winStart) {
-                delay(head.timestamp - winStart)
+                val remainingNanos = head.timestamp - winStart
+                val remainingMillis = remainingNanos / 1_000_000
+                delay(maxOf(1L, remainingMillis))
                 continue
             }
             sum.addAndGet(-1)

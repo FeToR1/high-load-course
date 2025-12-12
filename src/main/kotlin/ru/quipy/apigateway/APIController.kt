@@ -83,6 +83,7 @@ class APIController(
         return PaymentSubmissionDto(createdAt, paymentId)
     }
 
+
     private fun initBucketOnce(deadlineSeconds: Long) {
         if (bucket != null) {
             return
@@ -93,8 +94,12 @@ class APIController(
                 return
             }
 
+            val paymentSystemErrorCoeff = 1.1
+            val ourProcessingTime = 0.35
+
             val ttl: Double = (deadlineSeconds - System.currentTimeMillis()).toDouble() / 1000
-            val averageProcessingTimeSeconds: Double = account.averageProcessingTime().toSeconds().toDouble() * 2
+            val averageProcessingTimeSeconds: Double =
+                account.averageProcessingTime().toSeconds().toDouble() * paymentSystemErrorCoeff + ourProcessingTime
 
             val effectiveRps: Double = min(
                 account.rateLimitPerSec().toDouble(),

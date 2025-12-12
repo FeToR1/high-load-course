@@ -22,7 +22,8 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
 @Service
-    private val paymentAccounts: List<PaymentExternalSystemAdapter>
+class OrderPayer(
+    paymentAccounts: List<PaymentExternalSystemAdapter>
 ) {
 
     companion object {
