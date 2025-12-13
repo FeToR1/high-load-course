@@ -2,7 +2,6 @@ package ru.quipy.payments.logic
 
 import org.springframework.stereotype.Service
 import java.util.*
-import kotlin.coroutines.CoroutineContext
 
 @Service
 class PaymentSystemImpl(
@@ -10,9 +9,9 @@ class PaymentSystemImpl(
 ) : PaymentService {
     private val accountProvider = AccountProvider(paymentAccounts)
 
-    override suspend fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, ioContext: CoroutineContext) {
+    override suspend fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         accountProvider.withAccountAsync {
-            it.performPayment(paymentId, amount, paymentStartedAt, deadline, ioContext)
+            it.performPayment(paymentId, amount, paymentStartedAt, deadline)
         }
     }
 }

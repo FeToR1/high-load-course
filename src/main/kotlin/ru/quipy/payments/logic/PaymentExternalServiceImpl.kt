@@ -6,7 +6,6 @@ import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.future.await
-import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.common.utils.OngoingWindow
@@ -24,7 +23,6 @@ import java.util.UUID
 import java.util.concurrent.CompletionException
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadPoolExecutor
-import kotlin.coroutines.CoroutineContext
 import kotlin.math.pow
 
 // Advice: always treat time as a Duration
@@ -74,8 +72,7 @@ class PaymentExternalSystemAdapterImpl(
         paymentId: UUID,
         amount: Int,
         paymentStartedAt: Long,
-        deadline: Long,
-        ioContext: CoroutineContext
+        deadline: Long
     ) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
@@ -90,10 +87,8 @@ class PaymentExternalSystemAdapterImpl(
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-        withContext(ioContext) {
-            paymentESService.update(paymentId) {
-                it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
-            }
+        paymentESService.update(paymentId) {
+            it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
@@ -108,13 +103,13 @@ class PaymentExternalSystemAdapterImpl(
 
             for (i in 1..MAX_RETRIES) {
                 try {
-                    if (sendRequest(request, paymentId, transactionId, ioContext)) {
+                    if (sendRequest(request, paymentId, transactionId)) {
                         break
                     }
                 } catch (e: HttpTimeoutException) {
-                    handleTimeout(e, i, paymentId, transactionId, ioContext)
+                    handleTimeout(e, i, paymentId, transactionId)
                 } catch (e: CompletionException) {
-                    handleTimeout(e, i, paymentId, transactionId, ioContext)
+                    handleTimeout(e, i, paymentId, transactionId)
                 }
 
                 if (i > 1) {
@@ -134,24 +129,18 @@ class PaymentExternalSystemAdapterImpl(
             }
         } catch (e: HttpTimeoutException) {
             logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-            withContext(ioContext) {
-                paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                }
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
             }
         } catch (e: CompletionException) {
             logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-            withContext(ioContext) {
-                paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                }
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
             }
         } catch (e: Exception) {
             logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-            withContext(ioContext) {
-                paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId, reason = e.message)
-                }
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId, reason = e.message)
             }
         }
     }
@@ -160,8 +149,7 @@ class PaymentExternalSystemAdapterImpl(
         e: Exception,
         attempt: Int,
         paymentId: UUID,
-        transactionId: UUID,
-        ioContext: CoroutineContext
+        transactionId: UUID
     ) {
         logger.warn(
             "[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId, attempt $attempt/$MAX_RETRIES",
@@ -170,15 +158,13 @@ class PaymentExternalSystemAdapterImpl(
 
         if (attempt == MAX_RETRIES) {
             logger.error("[$accountName] Payment timeout after all retries for txId: $transactionId, payment: $paymentId")
-            withContext(ioContext) {
-                paymentESService.update(paymentId) {
-                    it.logProcessing(
-                        false,
-                        now(),
-                        transactionId,
-                        reason = "Request timeout after $MAX_RETRIES retries."
-                    )
-                }
+            paymentESService.update(paymentId) {
+                it.logProcessing(
+                    false,
+                    now(),
+                    transactionId,
+                    reason = "Request timeout after $MAX_RETRIES retries."
+                )
             }
             monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
             return
@@ -188,12 +174,12 @@ class PaymentExternalSystemAdapterImpl(
     suspend fun sendRequest(
         request: HttpRequest,
         paymentId: UUID,
-        transactionId: UUID,
-        ioContext: CoroutineContext
+        transactionId: UUID
     ): Boolean {
         try {
-            ongoingWindow.acquireAsync()
-            rateLimiter.acquireAsync()
+            // DEBUG: Закомментированы рейт-лимитеры
+            // ongoingWindow.acquireAsync()
+            // rateLimiter.acquireAsync()
 
             val startTime = System.currentTimeMillis()
 
@@ -218,14 +204,13 @@ class PaymentExternalSystemAdapterImpl(
 
             // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
             // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-            withContext(ioContext) {
-                paymentESService.update(paymentId) {
-                    it.logProcessing(body.result, now(), transactionId, reason = body.message)
-                }
-                return@withContext body.result
+            paymentESService.update(paymentId) {
+                it.logProcessing(body.result, now(), transactionId, reason = body.message)
             }
+            return body.result
         } finally {
-            ongoingWindow.release()
+            // DEBUG: Закомментирован release
+            // ongoingWindow.release()
         }
 
         return false
