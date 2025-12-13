@@ -213,7 +213,7 @@ class PaymentExternalSystemAdapterImpl(
 
             logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
 
-            val requestType = if (body.result) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
+            val requestType = if (response.statusCode() in 200..299) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
             monitoringService.increaseRequestsCounter(requestType)
 
             // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
