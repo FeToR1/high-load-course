@@ -43,7 +43,7 @@ class PaymentExternalSystemAdapterImpl(
 
         const val RETRY_DELAY_BASE = 2.0
         const val RETRY_DELAY_COEFF = 0.1
-        const val MAX_RETRIES = 5
+        const val MAX_RETRIES = 3
     }
 
     private val serviceName = properties.serviceName
