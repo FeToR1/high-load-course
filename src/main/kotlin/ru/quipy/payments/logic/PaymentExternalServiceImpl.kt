@@ -124,6 +124,7 @@ class PaymentExternalSystemAdapterImpl(
                 }
 
                 if (i < MAX_RETRIES) {
+                    logger.warn("RETRY")
                     delay(delay)
                 }
             }

@@ -50,7 +50,7 @@ class OrderPayer(
         CallerBlockingRejectedExecutionHandler()
     )
 
-    private val scope = CoroutineScope(paymentExecutor.asCoroutineDispatcher() + SupervisorJob())
+    private val scope = CoroutineScope(paymentExecutor.asCoroutineDispatcher())
 
     @PostConstruct
     fun registerPoolSizeMetrics() {
