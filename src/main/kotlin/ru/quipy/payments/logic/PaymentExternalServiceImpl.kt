@@ -55,7 +55,7 @@ class PaymentExternalSystemAdapterImpl(
         HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_2)
             .executor(httpClientExecutor)
-            .connectTimeout(monitoringService.get90thPercentileTimeout(accountName))
+            //.connectTimeout(monitoringService.get90thPercentileTimeout(accountName))
             .build()
     }
 
