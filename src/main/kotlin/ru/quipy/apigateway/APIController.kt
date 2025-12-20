@@ -94,7 +94,7 @@ class APIController(
                 return
             }
 
-            val paymentSystemErrorCoeff = 1.1
+            val paymentSystemErrorCoeff = 1
             val ourProcessingTime = 0.35
 
             val ttl: Double = (deadlineSeconds - System.currentTimeMillis()).toDouble() / 1000
@@ -108,7 +108,8 @@ class APIController(
 
             val bucketSize: Int = (effectiveRps * (ttl - averageProcessingTimeSeconds)).toInt()
 
-            logger.debug("Leaking bucket size: $bucketSize")
+            logger.warn("Leaking bucket size: $bucketSize")
+            logger.warn("Effective RPS: $effectiveRps")
 
             bucket = LeakingBucketRateLimiter(
                 account.rateLimitPerSec().toLong(),
