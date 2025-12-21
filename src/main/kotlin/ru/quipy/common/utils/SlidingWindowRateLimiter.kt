@@ -16,36 +16,36 @@ import kotlin.concurrent.withLock
 class SlidingWindowRateLimiter(
     private val rate: Long,
     private val window: Duration,
-) : BlockingRateLimiter {
+) : RateLimiter {
     private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
 
     private val sum = AtomicLong(0)
     private val queue = PriorityBlockingQueue<Measure>(10_000)
-
-    private val lock = ReentrantLock(true)
-    private val condition = lock.newCondition()
+    private val windowNanos = window.toNanos()
 
     override fun tick(): Boolean {
         while (true) {
             val curSum = sum.get()
             if (curSum >= rate) return false
             if (sum.compareAndSet(curSum, curSum + 1)) {
-                queue.add(Measure(1, System.currentTimeMillis()))
+                queue.add(Measure(1, System.nanoTime()))
                 return true
             }
         }
     }
 
-    override fun tickBlocking() {
-        lock.withLock {
-            while (!tick()) {
-                try {
-                    condition.await()
-                } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                }
-            }
+    fun tickBlocking() {
+        while (!tick()) {
+            Thread.sleep(10)
         }
+    }
+
+    suspend fun tickCoro() {
+        while (!tick()) { delay(100L) }
+    }
+
+    suspend fun acquireAsync() {
+        tickCoro()
     }
 
     data class Measure(
@@ -60,24 +60,21 @@ class SlidingWindowRateLimiter(
     private val releaseJob = rateLimiterScope.launch {
         while (true) {
             val head = queue.peek()
-            val winStart = System.currentTimeMillis() - window.toMillis()
+            val winStart = System.nanoTime() - windowNanos
             if (head == null) {
                 delay(1L)
                 continue
             }
             if (head.timestamp > winStart) {
-                delay(head.timestamp - winStart)
+                val remainingNanos = head.timestamp - winStart
+                val remainingMillis = remainingNanos / 1_000_000
+                delay(maxOf(1L, remainingMillis))
                 continue
             }
             sum.addAndGet(-1)
             queue.take()
-
-            lock.withLock {
-                condition.signal()
-            }
         }
     }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
-
     companion object {
         private val logger: Logger = LoggerFactory.getLogger(SlidingWindowRateLimiter::class.java)
     }

@@ -1,5 +1,6 @@
 package ru.quipy.payments.logic
 
+import kotlinx.coroutines.CoroutineDispatcher
 import java.time.Duration
 import java.util.*
 
@@ -7,7 +8,7 @@ interface PaymentService {
     /**
      * Submit payment request to some external service.
      */
-    fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long)
+    suspend fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, esDispatcher: CoroutineDispatcher)
 }
 
 /**
@@ -17,7 +18,7 @@ interface PaymentService {
 
  */
 interface PaymentExternalSystemAdapter {
-    fun performPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long)
+    suspend fun performPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, esDispatcher: CoroutineDispatcher)
 
     fun name(): String
 

@@ -1,5 +1,13 @@
 package ru.quipy.payments.logic
 
+import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.Metrics
+import jakarta.annotation.PostConstruct
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -10,6 +18,7 @@ import ru.quipy.common.utils.RateLimitExceededException
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.util.*
+import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -23,42 +32,62 @@ class OrderPayer(
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
     }
 
+    val processTime = paymentAccounts[0].averageProcessingTime().toMillis()
+
     @Autowired
     private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
 
     @Autowired
     private lateinit var paymentService: PaymentService
 
+    private val threadPoolSize = 64
+
     private val paymentExecutor = ThreadPoolExecutor(
-        paymentAccounts.maxOf { it.parallelRequests() },
-        paymentAccounts.maxOf { it.parallelRequests() },
-        0L,
-        TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(300),
+        threadPoolSize,
+        threadPoolSize,
+        0,
+        TimeUnit.SECONDS,
+        LinkedBlockingQueue(1000),
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
+
+    private val esDispatcher = Executors.newFixedThreadPool(32, NamedThreadFactory("event-sourcing-executor")).asCoroutineDispatcher()
+
+    private val scope = CoroutineScope(paymentExecutor.asCoroutineDispatcher())
+
+    @PostConstruct
+    fun registerPoolSizeMetrics() {
+        Gauge.builder("payment_executor_active_threads", paymentExecutor::getActiveCount)
+            .description("Payment exec active threads")
+            .register(Metrics.globalRegistry)
+        Gauge.builder("payment_executor_total_threads", paymentExecutor::getPoolSize)
+            .description("Payment exec total threads")
+            .register(Metrics.globalRegistry)
+    }
 
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
 
         if (paymentExecutor.queue.remainingCapacity() == 0) {
-            throw RateLimitExceededException(1000)
+            throw RateLimitExceededException(processTime * 5)
         }
 
-        paymentExecutor.submit {
-            val createdEvent = paymentESService.create {
-                it.create(
-                    paymentId,
-                    orderId,
-                    amount
-                )
+        scope.launch {
+            val createdEvent = withContext(esDispatcher) {
+                paymentESService.create {
+                    it.create(
+                        paymentId,
+                        orderId,
+                        amount
+                    )
+                }
             }
             logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
-            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline, esDispatcher)
         }
+
         return createdAt
     }
-
 }
