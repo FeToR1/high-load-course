@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -17,6 +18,7 @@ import ru.quipy.common.utils.RateLimitExceededException
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.util.*
+import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -50,6 +52,8 @@ class OrderPayer(
         CallerBlockingRejectedExecutionHandler()
     )
 
+    private val esDispatcher = Executors.newFixedThreadPool(32, NamedThreadFactory("event-sourcing-executor")).asCoroutineDispatcher()
+
     private val scope = CoroutineScope(paymentExecutor.asCoroutineDispatcher())
 
     @PostConstruct
@@ -70,16 +74,18 @@ class OrderPayer(
         }
 
         scope.launch {
-            val createdEvent = paymentESService.create {
-                it.create(
-                    paymentId,
-                    orderId,
-                    amount
-                )
+            val createdEvent = withContext(esDispatcher) {
+                paymentESService.create {
+                    it.create(
+                        paymentId,
+                        orderId,
+                        amount
+                    )
+                }
             }
             logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
-            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline, esDispatcher)
         }
 
         return createdAt

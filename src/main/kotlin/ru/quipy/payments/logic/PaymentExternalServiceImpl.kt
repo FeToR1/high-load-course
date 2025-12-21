@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.future.await
+import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.common.utils.OngoingWindow
@@ -72,7 +74,8 @@ class PaymentExternalSystemAdapterImpl(
         paymentId: UUID,
         amount: Int,
         paymentStartedAt: Long,
-        deadline: Long
+        deadline: Long,
+        esDispatcher: CoroutineDispatcher
     ) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
@@ -80,8 +83,10 @@ class PaymentExternalSystemAdapterImpl(
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-        paymentESService.update(paymentId) {
-            it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+        withContext(esDispatcher) {
+            paymentESService.update(paymentId) {
+                it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+            }
         }
 
         val request = HttpRequest.newBuilder()
@@ -92,7 +97,7 @@ class PaymentExternalSystemAdapterImpl(
 
         ongoingWindow.acquireAsync()
         try {
-            sendRequest(request, paymentId, transactionId, deadline * 1000)
+            sendRequest(request, paymentId, transactionId, deadline * 1000, esDispatcher)
         } finally {
             ongoingWindow.release()
         }
@@ -102,7 +107,8 @@ class PaymentExternalSystemAdapterImpl(
         request: HttpRequest,
         paymentId: UUID,
         transactionId: UUID,
-        deadlineMs: Long
+        deadlineMs: Long,
+        esDispatcher: CoroutineDispatcher
     ) {
         for (i in 1..MAX_RETRIES) {
             rateLimiter.acquireAsync()
@@ -112,8 +118,10 @@ class PaymentExternalSystemAdapterImpl(
             }
             if (now() + delayMs > deadlineMs) {
                 logger.error("[$accountName] [ERROR] Payment deadline exceeded for txId: $transactionId, payment: $paymentId")
-                paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded")
+                withContext(esDispatcher) {
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded")
+                    }
                 }
                 monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
                 return
@@ -141,8 +149,10 @@ class PaymentExternalSystemAdapterImpl(
 
                 if (response.statusCode() in 200..299) {
                     logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                    withContext(esDispatcher) {
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                        }
                     }
                     val requestType = if (body.result) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
                     monitoringService.increaseRequestsCounter(requestType)
@@ -156,8 +166,10 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         logger.error("[$accountName] [ERROR] All retry attempts exhausted for txId: $transactionId, payment: $paymentId")
-        paymentESService.update(paymentId) {
-            it.logProcessing(false, now(), transactionId, reason = "All retry attempts failed")
+        withContext(esDispatcher) {
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), transactionId, reason = "All retry attempts failed")
+            }
         }
         monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
     }
