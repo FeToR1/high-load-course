@@ -42,7 +42,7 @@ class PaymentExternalSystemAdapterImpl(
         val mapper = ObjectMapper().registerKotlinModule()
 
         const val RETRY_DELAY_BASE = 2.0
-        const val RETRY_DELAY_COEFF = 0.1
+        const val RETRY_DELAY_COEFF = 0.225
         const val MAX_RETRIES = 3
     }
 
@@ -55,7 +55,7 @@ class PaymentExternalSystemAdapterImpl(
         HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_2)
             .executor(httpClientExecutor)
-            //.connectTimeout(monitoringService.get90thPercentileTimeout(accountName))
+            .connectTimeout(monitoringService.get90thPercentileTimeout(accountName))
             .build()
     }
 
