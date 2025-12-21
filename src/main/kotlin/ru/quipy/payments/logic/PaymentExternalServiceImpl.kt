@@ -76,13 +76,6 @@ class PaymentExternalSystemAdapterImpl(
     ) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
-        val deadlineMs = deadline * 1000
-
-        if (now() > deadlineMs) {
-            monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
-            return
-        }
-
         val transactionId = UUID.randomUUID()
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
@@ -91,130 +84,83 @@ class PaymentExternalSystemAdapterImpl(
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
-        logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
+            .POST(HttpRequest.BodyPublishers.noBody())
+            .timeout(Duration.ofSeconds(40))
+            .build()
 
+        // ongoingWindow.acquireAsync()
         try {
-            val timeout = monitoringService.get90thPercentileTimeout(accountName)
-            val request = HttpRequest.newBuilder()
-                .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
-                .POST(HttpRequest.BodyPublishers.noBody())
-                .timeout(timeout)
-                .build()
-
-            for (i in 1..MAX_RETRIES) {
-                try {
-                    if (sendRequest(request, paymentId, transactionId)) {
-                        break
-                    }
-                } catch (e: HttpTimeoutException) {
-                    handleTimeout(e, i, paymentId, transactionId)
-                } catch (e: CompletionException) {
-                    handleTimeout(e, i, paymentId, transactionId)
-                }
-
-                if (i > 1) {
-                    monitoringService.increaseRetryCounter()
-                }
-
-                val delay = (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(i)).toLong()
-
-                if (deadlineMs < System.currentTimeMillis() + delay) {
-                    monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
-                    return
-                }
-
-                if (i < MAX_RETRIES) {
-                    logger.warn("RETRY")
-                    delay(delay)
-                }
-            }
-        } catch (e: HttpTimeoutException) {
-            logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-            paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-            }
-        } catch (e: CompletionException) {
-            logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-            paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-            }
-        } catch (e: Exception) {
-            logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-            paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), transactionId, reason = e.message)
-            }
-        }
-    }
-
-    private suspend fun handleTimeout(
-        e: Exception,
-        attempt: Int,
-        paymentId: UUID,
-        transactionId: UUID
-    ) {
-        logger.warn(
-            "[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId, attempt $attempt/$MAX_RETRIES",
-            e
-        )
-
-        if (attempt == MAX_RETRIES) {
-            logger.error("[$accountName] Payment timeout after all retries for txId: $transactionId, payment: $paymentId")
-            paymentESService.update(paymentId) {
-                it.logProcessing(
-                    false,
-                    now(),
-                    transactionId,
-                    reason = "Request timeout after $MAX_RETRIES retries."
-                )
-            }
-            monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
-            return
+            sendRequest(request, paymentId, transactionId, deadline * 1000)
+        } finally {
+            // ongoingWindow.release()
         }
     }
 
     suspend fun sendRequest(
         request: HttpRequest,
         paymentId: UUID,
-        transactionId: UUID
-    ): Boolean {
-        try {
-            // DEBUG: Закомментированы рейт-лимитеры
-            // ongoingWindow.acquireAsync()
+        transactionId: UUID,
+        deadlineMs: Long
+    ) {
+        for (i in 1..MAX_RETRIES) {
             // rateLimiter.acquireAsync()
+            val delayMs = if (i == 1) 0L else (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(i - 1) * 1000).toLong()
+            if (i > 1) {
+                monitoringService.increaseRetryCounter()
+            }
+            if (now() + delayMs > deadlineMs) {
+                logger.error("[$accountName] [ERROR] Payment deadline exceeded for txId: $transactionId, payment: $paymentId")
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded")
+                }
+                monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
+                return
+            }
 
-            val startTime = System.currentTimeMillis()
+            if (delayMs > 0) {
+                logger.warn("[$accountName] RETRY attempt $i after ${delayMs}ms delay")
+                delay(delayMs)
+            }
 
-            val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
+            try {
+                val startTime = now()
+                val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
+                val duration = now() - startTime
+                
+                val body = try {
+                    mapper.readValue(response.body(), ExternalSysResponse::class.java)
+                } catch (e: Exception) {
+                    logger.error("[$accountName] [ERROR] Failed to parse response for txId: $transactionId, payment: $paymentId, result code: ${response.statusCode()}, reason: ${response.body()}")
+                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+                }
+                
+                monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
+                monitoringService.recordRequestDuration(duration, body.result)
 
-            monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
-
-            val body = try {
-                mapper.readValue(response.body(), ExternalSysResponse::class.java)
+                if (response.statusCode() in 200..299) {
+                    logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                    }
+                    val requestType = if (body.result) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
+                    monitoringService.increaseRequestsCounter(requestType)
+                    return
+                }
+                logger.warn("[$accountName] Non-success status ${response.statusCode()} for txId: $transactionId, attempt $i")
+                
             } catch (e: Exception) {
-                logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.statusCode()}, reason: ${response.body()}")
-                ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+                }
             }
-
-            val duration = System.currentTimeMillis() - startTime
-            monitoringService.recordRequestDuration(duration, body.result)
-
-            logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-
-            val requestType = if (response.statusCode() in 200..299) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
-            monitoringService.increaseRequestsCounter(requestType)
-
-            // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
-            // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-            paymentESService.update(paymentId) {
-                it.logProcessing(body.result, now(), transactionId, reason = body.message)
-            }
-            return body.result
-        } finally {
-            // DEBUG: Закомментирован release
-            // ongoingWindow.release()
         }
 
-        return false
+        logger.error("[$accountName] [ERROR] All retry attempts exhausted for txId: $transactionId, payment: $paymentId")
+        paymentESService.update(paymentId) {
+            it.logProcessing(false, now(), transactionId, reason = "All retry attempts failed")
+        }
+        monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
     }
 
     override fun price() = properties.price
