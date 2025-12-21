@@ -151,8 +151,7 @@ class PaymentExternalSystemAdapterImpl(
                 logger.warn("[$accountName] Non-success status ${response.statusCode()} for txId: $transactionId, attempt $i")
                 
             } catch (e: Exception) {
-                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-                }
+                logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
             }
         }
 
