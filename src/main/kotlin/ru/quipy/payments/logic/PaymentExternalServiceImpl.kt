@@ -90,11 +90,11 @@ class PaymentExternalSystemAdapterImpl(
             .timeout(Duration.ofSeconds(40))
             .build()
 
-        // ongoingWindow.acquireAsync()
+        ongoingWindow.acquireAsync()
         try {
             sendRequest(request, paymentId, transactionId, deadline * 1000)
         } finally {
-            // ongoingWindow.release()
+            ongoingWindow.release()
         }
     }
 
@@ -105,7 +105,7 @@ class PaymentExternalSystemAdapterImpl(
         deadlineMs: Long
     ) {
         for (i in 1..MAX_RETRIES) {
-            // rateLimiter.acquireAsync()
+            rateLimiter.acquireAsync()
             val delayMs = if (i == 1) 0L else (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(i - 1) * 1000).toLong()
             if (i > 1) {
                 monitoringService.increaseRetryCounter()
