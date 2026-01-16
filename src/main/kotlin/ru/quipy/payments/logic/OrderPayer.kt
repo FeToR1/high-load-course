@@ -3,14 +3,11 @@ package ru.quipy.payments.logic
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
 import jakarta.annotation.PostConstruct
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
 import ru.quipy.common.utils.NamedThreadFactory
@@ -18,14 +15,13 @@ import ru.quipy.common.utils.RateLimitExceededException
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.util.*
-import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
 @Service
 class OrderPayer(
-    paymentAccounts: List<PaymentExternalSystemAdapter>
+    paymentAccounts: List<PaymentExternalSystemAdapter>,
 ) {
 
     companion object {
@@ -40,6 +36,10 @@ class OrderPayer(
     @Autowired
     private lateinit var paymentService: PaymentService
 
+    @Autowired
+    @Qualifier("eventSourcingDispatcher")
+    private lateinit var esDispatcher: ExecutorCoroutineDispatcher
+
     private val threadPoolSize = 64
 
     private val paymentExecutor = ThreadPoolExecutor(
@@ -51,8 +51,6 @@ class OrderPayer(
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
-
-    private val esDispatcher = Executors.newFixedThreadPool(32, NamedThreadFactory("event-sourcing-executor")).asCoroutineDispatcher()
 
     private val scope = CoroutineScope(paymentExecutor.asCoroutineDispatcher())
 
@@ -85,7 +83,7 @@ class OrderPayer(
             }
             logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
-            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline, esDispatcher)
+            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         }
 
         return createdAt

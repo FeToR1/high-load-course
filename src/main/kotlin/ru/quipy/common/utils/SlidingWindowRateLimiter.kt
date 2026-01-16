@@ -10,18 +10,37 @@ import java.time.Duration
 import java.util.concurrent.Executors
 import java.util.concurrent.PriorityBlockingQueue
 import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.withLock
 
 class SlidingWindowRateLimiter(
     private val rate: Long,
-    private val window: Duration,
+    window: Duration = Duration.ofSeconds(1)
 ) : RateLimiter {
     private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
 
     private val sum = AtomicLong(0)
     private val queue = PriorityBlockingQueue<Measure>(10_000)
     private val windowNanos = window.toNanos()
+
+    init {
+        rateLimiterScope.launch {
+            while (true) {
+                val head = queue.peek()
+                val winStart = System.nanoTime() - windowNanos
+                if (head == null) {
+                    delay(1L)
+                    continue
+                }
+                if (head.timestamp > winStart) {
+                    val remainingNanos = head.timestamp - winStart
+                    val remainingMillis = remainingNanos / 1_000_000
+                    delay(maxOf(1L, remainingMillis))
+                    continue
+                }
+                sum.addAndGet(-1)
+                queue.take()
+            }
+        }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
+    }
 
     override fun tick(): Boolean {
         while (true) {
@@ -34,18 +53,10 @@ class SlidingWindowRateLimiter(
         }
     }
 
-    fun tickBlocking() {
+    suspend fun tickAsync() {
         while (!tick()) {
-            Thread.sleep(10)
+            delay(100L)
         }
-    }
-
-    suspend fun tickCoro() {
-        while (!tick()) { delay(100L) }
-    }
-
-    suspend fun acquireAsync() {
-        tickCoro()
     }
 
     data class Measure(
@@ -57,24 +68,6 @@ class SlidingWindowRateLimiter(
         }
     }
 
-    private val releaseJob = rateLimiterScope.launch {
-        while (true) {
-            val head = queue.peek()
-            val winStart = System.nanoTime() - windowNanos
-            if (head == null) {
-                delay(1L)
-                continue
-            }
-            if (head.timestamp > winStart) {
-                val remainingNanos = head.timestamp - winStart
-                val remainingMillis = remainingNanos / 1_000_000
-                delay(maxOf(1L, remainingMillis))
-                continue
-            }
-            sum.addAndGet(-1)
-            queue.take()
-        }
-    }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
     companion object {
         private val logger: Logger = LoggerFactory.getLogger(SlidingWindowRateLimiter::class.java)
     }

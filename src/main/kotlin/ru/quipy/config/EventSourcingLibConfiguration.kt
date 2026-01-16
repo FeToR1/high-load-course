@@ -1,6 +1,7 @@
 package ru.quipy.config
 
 import jakarta.annotation.PostConstruct
+import kotlinx.coroutines.asCoroutineDispatcher
 import org.eclipse.jetty.http2.server.HTTP2CServerConnectionFactory
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -8,11 +9,13 @@ import org.springframework.boot.web.embedded.jetty.JettyServerCustomizer
 import org.springframework.boot.web.embedded.jetty.JettyServletWebServerFactory
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.core.EventSourcingServiceFactory
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.logic.PaymentAggregateState
 import ru.quipy.streams.AggregateEventStreamManager
-import java.util.UUID
+import java.util.*
+import java.util.concurrent.Executors
 
 /**
  * This files contains some configurations that you might want to have in your project. Some configurations are
@@ -76,4 +79,10 @@ class EventSourcingLibConfiguration {
         jettyServletWebServerFactory.serverCustomizers.add(c)
         return jettyServletWebServerFactory
     }
+
+    @Bean
+    fun eventSourcingDispatcher() = Executors.newFixedThreadPool(
+        32,
+        NamedThreadFactory("event-sourcing-executor")
+    ).asCoroutineDispatcher()
 }

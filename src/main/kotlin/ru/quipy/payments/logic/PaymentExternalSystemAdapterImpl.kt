@@ -5,13 +5,15 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.withContext
+import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import ru.quipy.core.EventSourcingService
 import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.SlidingWindowRateLimiter
+import ru.quipy.core.EventSourcingService
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.payments.api.PaymentAggregate
@@ -19,10 +21,8 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
-import java.net.http.HttpTimeoutException
 import java.time.Duration
-import java.util.UUID
-import java.util.concurrent.CompletionException
+import java.util.*
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadPoolExecutor
 import kotlin.math.pow
@@ -35,11 +35,12 @@ class PaymentExternalSystemAdapterImpl(
     private val token: String,
     private val monitoringService: MonitoringService,
     private val ongoingWindow: OngoingWindow,
-    private val rateLimiter: SlidingWindowRateLimiter
+    private val rateLimiter: SlidingWindowRateLimiter,
+    val esDispatcher: ExecutorCoroutineDispatcher
 ) : PaymentExternalSystemAdapter {
 
     companion object {
-        val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
+        val logger: Logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
 
         val mapper = ObjectMapper().registerKotlinModule()
 
@@ -74,8 +75,7 @@ class PaymentExternalSystemAdapterImpl(
         paymentId: UUID,
         amount: Int,
         paymentStartedAt: Long,
-        deadline: Long,
-        esDispatcher: CoroutineDispatcher
+        deadline: Long
     ) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
@@ -111,7 +111,7 @@ class PaymentExternalSystemAdapterImpl(
         esDispatcher: CoroutineDispatcher
     ) {
         for (i in 1..MAX_RETRIES) {
-            rateLimiter.acquireAsync()
+            rateLimiter.tickAsync()
             val delayMs = if (i == 1) 0L else (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(i - 1) * 1000).toLong()
             if (i > 1) {
                 monitoringService.increaseRetryCounter()
@@ -136,14 +136,14 @@ class PaymentExternalSystemAdapterImpl(
                 val startTime = now()
                 val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
                 val duration = now() - startTime
-                
+
                 val body = try {
                     mapper.readValue(response.body(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
                     logger.error("[$accountName] [ERROR] Failed to parse response for txId: $transactionId, payment: $paymentId, result code: ${response.statusCode()}, reason: ${response.body()}")
                     ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
-                
+
                 monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
                 monitoringService.recordRequestDuration(duration, body.result)
 
@@ -159,7 +159,7 @@ class PaymentExternalSystemAdapterImpl(
                     return
                 }
                 logger.warn("[$accountName] Non-success status ${response.statusCode()} for txId: $transactionId, attempt $i")
-                
+
             } catch (e: Exception) {
                 logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
             }
