@@ -2,26 +2,27 @@ package ru.quipy.apigateway
 
 import org.slf4j.LoggerFactory
 import org.springframework.web.bind.annotation.*
-import ru.quipy.common.utils.LeakingBucketRateLimiter
 import ru.quipy.common.utils.RateLimitExceededException
+import ru.quipy.common.utils.RateLimiter
+import ru.quipy.common.utils.RateLimiterFactory
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import ru.quipy.payments.logic.PaymentExternalSystemAdapter
-import java.time.Duration
+import java.time.Instant
 import java.util.*
-import kotlin.math.min
 
 @RestController
 class APIController(
     paymentAccounts: List<PaymentExternalSystemAdapter>,
     private val orderRepository: OrderRepository,
     private val orderPayer: OrderPayer,
-    private val monitoringService: MonitoringService
+    private val monitoringService: MonitoringService,
+    private val rateLimiterFactory: RateLimiterFactory
 ) {
     @Volatile
-    private var bucket: LeakingBucketRateLimiter? = null
+    private var bucket: RateLimiter? = null
     private val account = paymentAccounts[0]
     private val bucketLock = Any()
 
@@ -83,8 +84,7 @@ class APIController(
         return PaymentSubmissionDto(createdAt, paymentId)
     }
 
-
-    private fun initBucketOnce(deadlineSeconds: Long) {
+    private fun initBucketOnce(deadlineMillis: Long) {
         if (bucket != null) {
             return
         }
@@ -94,28 +94,7 @@ class APIController(
                 return
             }
 
-            val paymentSystemErrorCoeff = 1
-            val ourProcessingTime = 0.35
-
-            val ttl: Double = (deadlineSeconds - System.currentTimeMillis()).toDouble() / 1000
-            val averageProcessingTimeSeconds: Double =
-                account.averageProcessingTime().toSeconds().toDouble() * paymentSystemErrorCoeff + ourProcessingTime
-
-            val effectiveRps: Double = min(
-                account.rateLimitPerSec().toDouble(),
-                account.parallelRequests().toDouble() / averageProcessingTimeSeconds
-            )
-
-            val bucketSize: Int = (effectiveRps * (ttl - averageProcessingTimeSeconds)).toInt()
-
-            logger.warn("Leaking bucket size: $bucketSize")
-            logger.warn("Effective RPS: $effectiveRps")
-
-            bucket = LeakingBucketRateLimiter(
-                account.rateLimitPerSec().toLong(),
-                Duration.ofSeconds(1),
-                bucketSize
-            )
+            bucket = rateLimiterFactory.createForAccount(account, Instant.ofEpochMilli(deadlineMillis))
         }
     }
 
