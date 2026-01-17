@@ -15,7 +15,7 @@ enum class RequestType {
 }
 
 @Service
-class MonitoringService() {
+class MonitoringService {
 
     fun increaseRequestsCounter(requestType: RequestType) = Counter
         .builder("http_requests_count")

@@ -3,10 +3,14 @@ package ru.quipy.payments.config
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import ru.quipy.common.utils.OngoingWindow
+import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.payments.api.PaymentAggregate
@@ -43,6 +47,10 @@ class PaymentAccountsConfig {
     @Autowired
     private lateinit var monitoringService: MonitoringService
 
+    @Autowired
+    @Qualifier("eventSourcingDispatcher")
+    private lateinit var esDispatcher: ExecutorCoroutineDispatcher
+
     @Bean
     fun accountAdapters(paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>): List<PaymentExternalSystemAdapter> {
         val request = HttpRequest.newBuilder()
@@ -66,7 +74,10 @@ class PaymentAccountsConfig {
                     paymentService,
                     paymentProviderHostPort,
                     token,
-                    monitoringService
+                    monitoringService,
+                    OngoingWindow(it.parallelRequests),
+                    SlidingWindowRateLimiter(it.rateLimitPerSec.toLong()),
+                    esDispatcher
                 )
             }
     }
