@@ -4,11 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.ExecutorCoroutineDispatcher
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.*
 import kotlinx.coroutines.future.await
-import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.OngoingWindow
@@ -38,6 +35,8 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimiter: SlidingWindowRateLimiter,
     val esDispatcher: ExecutorCoroutineDispatcher
 ) : PaymentExternalSystemAdapter {
+
+    private val scope = CoroutineScope(esDispatcher)
 
     companion object {
         val logger: Logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
@@ -83,7 +82,7 @@ class PaymentExternalSystemAdapterImpl(
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-        withContext(esDispatcher) {
+        scope.launch {
             paymentESService.update(paymentId) {
                 it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
             }
@@ -118,7 +117,7 @@ class PaymentExternalSystemAdapterImpl(
             }
             if (now() + delayMs > deadlineMs) {
                 logger.error("[$accountName] [ERROR] Payment deadline exceeded for txId: $transactionId, payment: $paymentId")
-                withContext(esDispatcher) {
+                scope.launch {
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded")
                     }
@@ -149,7 +148,7 @@ class PaymentExternalSystemAdapterImpl(
 
                 if (response.statusCode() in 200..299) {
                     logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-                    withContext(esDispatcher) {
+                    scope.launch {
                         paymentESService.update(paymentId) {
                             it.logProcessing(body.result, now(), transactionId, reason = body.message)
                         }
@@ -166,7 +165,7 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         logger.error("[$accountName] [ERROR] All retry attempts exhausted for txId: $transactionId, payment: $paymentId")
-        withContext(esDispatcher) {
+        scope.launch {
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId, reason = "All retry attempts failed")
             }
