@@ -49,7 +49,8 @@ class MonitoringService {
         private const val DEFAULT_TIMEOUT_MS = 5000L
 
         private val ACCOUNT_TIMEOUTS = mapOf(
-            "acc-7" to 1070L
+            "acc-7" to 1070L,
+            "acc-13" to 950L
         )
     }
 }

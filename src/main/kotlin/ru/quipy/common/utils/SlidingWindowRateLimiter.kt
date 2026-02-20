@@ -4,12 +4,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.util.concurrent.Executors
 import java.util.concurrent.PriorityBlockingQueue
-import java.util.concurrent.atomic.AtomicLong
 
 class SlidingWindowRateLimiter(
     private val rate: Long,
@@ -17,7 +17,7 @@ class SlidingWindowRateLimiter(
 ) : RateLimiter {
     private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
 
-    private val sum = AtomicLong(0)
+    private val semaphore = Semaphore(rate.toInt())
     private val queue = PriorityBlockingQueue<Measure>(10_000)
     private val windowNanos = window.toNanos()
 
@@ -36,27 +36,24 @@ class SlidingWindowRateLimiter(
                     delay(maxOf(1L, remainingMillis))
                     continue
                 }
-                sum.addAndGet(-1)
-                queue.take()
+                semaphore.release()
+                queue.poll()
             }
         }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
     }
 
     override fun tick(): Boolean {
-        while (true) {
-            val curSum = sum.get()
-            if (curSum >= rate) return false
-            if (sum.compareAndSet(curSum, curSum + 1)) {
-                queue.add(Measure(1, System.nanoTime()))
-                return true
-            }
+        return if (semaphore.tryAcquire()) {
+            queue.add(Measure(1, System.nanoTime()))
+            true
+        } else {
+            false
         }
     }
 
     suspend fun tickAsync() {
-        while (!tick()) {
-            delay(100L)
-        }
+        semaphore.acquire()
+        queue.add(Measure(1, System.nanoTime()))
     }
 
     data class Measure(
