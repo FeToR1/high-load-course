@@ -82,7 +82,7 @@ class EventSourcingLibConfiguration {
 
     @Bean
     fun eventSourcingDispatcher() = Executors.newFixedThreadPool(
-        32,
+        512,
         NamedThreadFactory("event-sourcing-executor")
     ).asCoroutineDispatcher()
 }

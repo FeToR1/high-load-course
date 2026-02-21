@@ -40,14 +40,14 @@ class OrderPayer(
     @Qualifier("eventSourcingDispatcher")
     private lateinit var esDispatcher: ExecutorCoroutineDispatcher
 
-    private val threadPoolSize = 64
+    private val threadPoolSize = 512
 
     private val paymentExecutor = ThreadPoolExecutor(
         threadPoolSize,
         threadPoolSize,
         0,
         TimeUnit.SECONDS,
-        LinkedBlockingQueue(1000),
+        LinkedBlockingQueue(10000),
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )

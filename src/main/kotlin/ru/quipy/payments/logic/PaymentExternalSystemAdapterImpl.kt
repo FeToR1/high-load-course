@@ -54,7 +54,7 @@ class PaymentExternalSystemAdapterImpl(
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
 
-    private val httpClientExecutor = Executors.newFixedThreadPool(15)
+    private val httpClientExecutor = Executors.newFixedThreadPool(512)
 
     private val client: HttpClient by lazy {
         HttpClient.newBuilder()
