@@ -39,7 +39,7 @@ class SlidingWindowRateLimiter(
                 queue.poll()
                 semaphore.release()
             }
-        }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
+        }.invokeOnCompletion { th -> if (th != null) {} } // logger.error("Rate limiter release job completed", th) }
     }
 
     override fun tick(): Boolean {
@@ -55,6 +55,8 @@ class SlidingWindowRateLimiter(
         semaphore.acquire()
         queue.add(Measure(1, System.nanoTime()))
     }
+    
+    fun availablePermits(): Int = semaphore.availablePermits
 
     data class Measure(
         val value: Long,

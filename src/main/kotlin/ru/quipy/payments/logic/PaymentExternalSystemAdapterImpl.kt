@@ -46,6 +46,9 @@ class PaymentExternalSystemAdapterImpl(
         const val RETRY_DELAY_BASE = 2.0
         const val RETRY_DELAY_COEFF = 0.225
         const val MAX_RETRIES = 3
+        
+        @Volatile
+        private var requestCounter = 0
     }
 
     private val serviceName = properties.serviceName
@@ -76,7 +79,19 @@ class PaymentExternalSystemAdapterImpl(
         paymentStartedAt: Long,
         deadline: Long
     ) {
-        logger.warn("[$accountName] Submitting payment request for payment $paymentId")
+        // logger.warn("[$accountName] Submitting payment request for payment $paymentId")
+        
+        // Логирование заполненности очередей каждые 5 запросов
+        val currentCount = ++requestCounter
+        if (currentCount % 5 == 0) {
+            val activeThreads = (httpClientExecutor as ThreadPoolExecutor).activeCount
+            val poolSize = httpClientExecutor.poolSize
+            val queueSize = httpClientExecutor.queue.size
+            val rateLimiterAvailable = rateLimiter.availablePermits()
+            val ongoingWindowAvailable = ongoingWindow.awaitingQueueSize()
+            
+            logger.info("[$accountName] REQ#$currentCount | HTTP Pool: $activeThreads/$poolSize active, queue: $queueSize | RateLimiter: $rateLimiterAvailable permits | OngoingWindow: $ongoingWindowAvailable permits")
+        }
 
         val transactionId = UUID.randomUUID()
 
@@ -116,7 +131,7 @@ class PaymentExternalSystemAdapterImpl(
                 monitoringService.increaseRetryCounter()
             }
             if (now() + delayMs > deadlineMs) {
-                logger.error("[$accountName] [ERROR] Payment deadline exceeded for txId: $transactionId, payment: $paymentId")
+                // logger.error("[$accountName] [ERROR] Payment deadline exceeded for txId: $transactionId, payment: $paymentId")
                 scope.launch {
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded")
@@ -127,7 +142,7 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             if (delayMs > 0) {
-                logger.warn("[$accountName] RETRY attempt $i after ${delayMs}ms delay")
+                // logger.warn("[$accountName] RETRY attempt $i after ${delayMs}ms delay")
                 delay(delayMs)
             }
 
@@ -139,7 +154,7 @@ class PaymentExternalSystemAdapterImpl(
                 val body = try {
                     mapper.readValue(response.body(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
-                    logger.error("[$accountName] [ERROR] Failed to parse response for txId: $transactionId, payment: $paymentId, result code: ${response.statusCode()}, reason: ${response.body()}")
+                    // logger.error("[$accountName] [ERROR] Failed to parse response for txId: $transactionId, payment: $paymentId, result code: ${response.statusCode()}, reason: ${response.body()}")
                     ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
 
@@ -147,7 +162,7 @@ class PaymentExternalSystemAdapterImpl(
                 monitoringService.recordRequestDuration(duration, body.result)
 
                 if (response.statusCode() in 200..299) {
-                    logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+                    // logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
                     scope.launch {
                         paymentESService.update(paymentId) {
                             it.logProcessing(body.result, now(), transactionId, reason = body.message)
@@ -157,14 +172,14 @@ class PaymentExternalSystemAdapterImpl(
                     monitoringService.increaseRequestsCounter(requestType)
                     return
                 }
-                logger.warn("[$accountName] Non-success status ${response.statusCode()} for txId: $transactionId, attempt $i")
+                // logger.warn("[$accountName] Non-success status ${response.statusCode()} for txId: $transactionId, attempt $i")
 
             } catch (e: Exception) {
-                logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+                // logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
             }
         }
 
-        logger.error("[$accountName] [ERROR] All retry attempts exhausted for txId: $transactionId, payment: $paymentId")
+        // logger.error("[$accountName] [ERROR] All retry attempts exhausted for txId: $transactionId, payment: $paymentId")
         scope.launch {
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId, reason = "All retry attempts failed")

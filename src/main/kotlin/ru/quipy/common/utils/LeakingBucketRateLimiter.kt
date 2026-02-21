@@ -27,7 +27,7 @@ class LeakingBucketRateLimiter(
                     queue.poll()
                 }
             }
-        }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
+        }.invokeOnCompletion { th -> if (th != null) {} } // logger.error("Rate limiter release job completed", th) }
     }
 
     override fun tick(): Boolean {

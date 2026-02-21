@@ -81,7 +81,7 @@ class OrderPayer(
                     )
                 }
             }
-            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+            // logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         }
