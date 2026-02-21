@@ -36,8 +36,8 @@ class SlidingWindowRateLimiter(
                     delay(maxOf(1L, remainingMillis))
                     continue
                 }
-                semaphore.release()
                 queue.poll()
+                semaphore.release()
             }
         }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
     }
