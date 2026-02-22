@@ -35,9 +35,10 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
     }
 
     private fun calculateTotalProcessingTime(account: PaymentExternalSystemAdapter): Duration {
-        return account.averageProcessingTime()
-            .multipliedBy(1L + PAYMENT_SYSTEM_ERROR_COEFF)
-            .plus(APP_PROCESSING_TIME)
+        var avgTime = account.averageProcessingTime().toMillis()
+        avgTime += (avgTime * PAYMENT_SYSTEM_ERROR_COEFF).toLong()
+        avgTime += APP_PROCESSING_TIME.toMillis()
+        return Duration.ofMillis(avgTime)
     }
 
     private fun calculateBucketSize(
@@ -57,7 +58,7 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
     }
 
     companion object {
-        private const val PAYMENT_SYSTEM_ERROR_COEFF = 0
+        private const val PAYMENT_SYSTEM_ERROR_COEFF = 0.5 // 50% extra time to account for errors and retries (test)
         private const val DEFAULT_BUCKET_SIZE = 100
         private val logger = LoggerFactory.getLogger(LeakingBucketRateLimiterFactory::class.java)
         private val APP_PROCESSING_TIME = Duration.ofMillis(350)
