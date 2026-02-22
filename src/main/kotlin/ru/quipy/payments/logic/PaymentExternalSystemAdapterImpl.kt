@@ -4,8 +4,11 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.future.await
+import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.OngoingWindow
@@ -32,11 +35,10 @@ class PaymentExternalSystemAdapterImpl(
     private val token: String,
     private val monitoringService: MonitoringService,
     private val ongoingWindow: OngoingWindow,
-    private val rateLimiter: SlidingWindowRateLimiter,
-    val esDispatcher: ExecutorCoroutineDispatcher
+    private val rateLimiter: SlidingWindowRateLimiter
 ) : PaymentExternalSystemAdapter {
 
-    private val scope = CoroutineScope(esDispatcher)
+    private val scope = CoroutineScope(Dispatchers.IO)
 
     companion object {
         val logger: Logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
@@ -111,7 +113,7 @@ class PaymentExternalSystemAdapterImpl(
 
         ongoingWindow.acquireAsync()
         try {
-            sendRequest(request, paymentId, transactionId, deadline * 1000, esDispatcher)
+            sendRequest(request, paymentId, transactionId, deadline * 1000)
         } finally {
             ongoingWindow.release()
         }
@@ -121,8 +123,7 @@ class PaymentExternalSystemAdapterImpl(
         request: HttpRequest,
         paymentId: UUID,
         transactionId: UUID,
-        deadlineMs: Long,
-        esDispatcher: CoroutineDispatcher
+        deadlineMs: Long
     ) {
         for (i in 1..MAX_RETRIES) {
             rateLimiter.tickAsync()
