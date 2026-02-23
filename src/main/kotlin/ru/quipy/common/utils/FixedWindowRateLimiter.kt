@@ -46,13 +46,13 @@ class FixedWindowRateLimiter(
             repeat(permitsToRelease) {
                 runCatching {
                     semaphore.release()
-                }.onFailure { th -> {} } // logger.error("Failed while releasing permits", th) }
+                }.onFailure { th -> logger.error("Failed while releasing permits", th) }
             }
-            // logger.trace("Semaphore ${semaphoreNumber}. Released $permitsToRelease permits")
+            logger.trace("Semaphore ${semaphoreNumber}. Released $permitsToRelease permits")
 
             delay(nextExpectedWakeUp - System.currentTimeMillis())
         }
-    }.invokeOnCompletion { th -> if (th != null) {} } // logger.error("Rate limiter release job completed", th) }
+    }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
 
     override fun tick() = semaphore.tryAcquire()
 
@@ -78,7 +78,7 @@ class SlowStartRateLimiter(
             repeat(targetRate) {
                 runCatching {
                     semaphore.acquire()
-                }.onFailure { th -> {} } // logger.error("Failed while initially acquiring permits", th) }
+                }.onFailure { th -> logger.error("Failed while initially acquiring permits", th) }
             }
         }
     }
@@ -91,9 +91,9 @@ class SlowStartRateLimiter(
             repeat(permitsToRelease) {
                 runCatching {
                     semaphore.release()
-                }.onFailure { th -> {} } // logger.error("Failed while releasing permits", th) }
+                }.onFailure { th -> logger.error("Failed while releasing permits", th) }
             }
-            // logger.trace("Rate limiter ${rateLimiterNum}. Released $permitsToRelease permits")
+            logger.trace("Rate limiter ${rateLimiterNum}. Released $permitsToRelease permits")
 
             if (slowStartOn && currentRate < targetRate) {
                 currentRate = minOf(targetRate, currentRate * 2)
@@ -101,7 +101,7 @@ class SlowStartRateLimiter(
 
             delay(timeUnit.toMillis(1) - (System.currentTimeMillis() - start))
         }
-    }.invokeOnCompletion { th -> if (th != null) {} } // logger.error("Rate limiter release job completed", th) }
+    }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
 
     override fun tick() = semaphore.tryAcquire()
 

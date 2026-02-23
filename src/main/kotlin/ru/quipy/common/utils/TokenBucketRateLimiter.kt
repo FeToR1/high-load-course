@@ -26,17 +26,19 @@ class TokenBucketRateLimiter(
     private var start = System.currentTimeMillis()
     private var nextExpectedWakeUp = start + timeUnit.toMillis(window)
 
-    private val releaseJob = rateLimiterScope.launch {
-        while (true) {
-            start = System.currentTimeMillis()
-            nextExpectedWakeUp = start + timeUnit.toMillis(window)
+    init {
+        rateLimiterScope.launch {
+            while (true) {
+                start = System.currentTimeMillis()
+                nextExpectedWakeUp = start + timeUnit.toMillis(window)
 
-            bucket.get().let { cur ->
-                bucket.addAndGet(if (cur + rate > bucketMaxCapacity) bucketMaxCapacity - cur else rate)
+                bucket.get().let { cur ->
+                    bucket.addAndGet(if (cur + rate > bucketMaxCapacity) bucketMaxCapacity - cur else rate)
+                }
+                delay(nextExpectedWakeUp - System.currentTimeMillis())
             }
-            delay(nextExpectedWakeUp - System.currentTimeMillis())
-        }
-    }.invokeOnCompletion { th -> if (th != null) {} } // logger.error("Rate limiter release job completed", th) }
+        }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
+    }
 
     override fun tick(): Boolean {
         while (true) {

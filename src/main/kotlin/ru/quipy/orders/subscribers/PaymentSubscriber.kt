@@ -35,13 +35,13 @@ class PaymentSubscriber {
         ) {
             `when`(PaymentProcessedEvent::class) { event ->
                 appExecutor.submit {
-                    // logger.trace(
-                    //     "Payment results. OrderId ${event.orderId}, succeeded: ${event.success}, txId: ${event.transactionId}, reason: ${event.reason}, duration: ${
-                    //         Duration.ofMillis(
-                    //             event.createdAt - event.submittedAt
-                    //         ).toSeconds()
-                    //     }, spent in queue: ${event.spentInQueueDuration.toSeconds()}"
-                    // )
+                    logger.trace(
+                        "Payment results. OrderId ${event.orderId}, succeeded: ${event.success}, txId: ${event.transactionId}, reason: ${event.reason}, duration: ${
+                            Duration.ofMillis(
+                                event.createdAt - event.submittedAt
+                            ).toSeconds()
+                        }, spent in queue: ${event.spentInQueueDuration.toSeconds()}"
+                    )
                 }
             }
         }

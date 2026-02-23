@@ -56,11 +56,11 @@ class EventSourcingLibConfiguration {
         // Demonstrates how you can set up the listeners to the event stream
         eventStreamManager.maintenance {
             onRecordHandledSuccessfully { streamName, eventName ->
-                // logger.debug("Stream $streamName successfully processed record of $eventName")
+                logger.debug("Stream $streamName successfully processed record of $eventName")
             }
 
             onBatchRead { streamName, batchSize ->
-                // logger.debug("Stream $streamName read batch size: $batchSize")
+                logger.debug("Stream $streamName read batch size: $batchSize")
             }
         }
     }

@@ -19,13 +19,13 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
         val ttl = Duration.between(Instant.now(), deadline)
 
         val bucketSize = if (ttl < processingTime) {
-            // logger.warn("Request TTL (${ttl.toMillis()} ms) < average processing time, using default bucket size")
+            logger.warn("Request TTL (${ttl.toMillis()} ms) < average processing time, using default bucket size")
             DEFAULT_BUCKET_SIZE
         } else {
             calculateBucketSize(account, ttl, processingTime)
         }
 
-        // logger.info("Leaking bucket size: $bucketSize")
+        logger.info("Leaking bucket size: $bucketSize")
 
         return LeakingBucketRateLimiter(
             account.rateLimitPerSec().toLong(),
@@ -53,6 +53,8 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
             account.rateLimitPerSec().toDouble(),
             account.parallelRequests().toDouble() / totalProcessingTime.toMillis() * 1000
         )
+
+        logger.info("Effective RPS: $effectiveRps")
 
         return max(1, (effectiveRps * processingWaitLimit.toMillis() / 1000).toInt())
     }
