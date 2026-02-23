@@ -41,14 +41,14 @@ class MonitoringService {
     }
 
     fun get90thPercentileTimeout(accountName: String): Duration {
-        val timeoutMs = ACCOUNT_TIMEOUTS[accountName] ?: DEFAULT_TIMEOUT_MS
+        val timeoutMs = ACCOUNT_TIMEOUTS_MS[accountName] ?: DEFAULT_TIMEOUT_MS
         return Duration.ofMillis(timeoutMs)
     }
 
     companion object {
         private const val DEFAULT_TIMEOUT_MS = 5000L
 
-        private val ACCOUNT_TIMEOUTS = mapOf(
+        private val ACCOUNT_TIMEOUTS_MS = mapOf(
             "acc-7" to 1070L,
             "acc-13" to 950L
         )

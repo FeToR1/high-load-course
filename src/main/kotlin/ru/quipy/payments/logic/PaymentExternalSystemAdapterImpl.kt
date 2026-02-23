@@ -2,13 +2,8 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import io.micrometer.core.instrument.Gauge
-import io.micrometer.core.instrument.Metrics
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.*
 import kotlinx.coroutines.future.await
-import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.OngoingWindow
@@ -23,8 +18,6 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
 import java.util.*
-import java.util.concurrent.Executors
-import java.util.concurrent.ThreadPoolExecutor
 import kotlin.math.pow
 
 // Advice: always treat time as a Duration
@@ -53,23 +46,11 @@ class PaymentExternalSystemAdapterImpl(
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
 
-    private val httpClientExecutor = Executors.newFixedThreadPool(512)
-
     private val client: HttpClient by lazy {
         HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_2)
-            .executor(httpClientExecutor)
             .connectTimeout(monitoringService.get90thPercentileTimeout(accountName))
             .build()
-    }
-
-    init {
-        Gauge.builder("http_client_active_connections", (httpClientExecutor as ThreadPoolExecutor)::getActiveCount)
-            .description("Http client active connections")
-            .register(Metrics.globalRegistry)
-        Gauge.builder("http_client_total_connections", httpClientExecutor::getPoolSize)
-            .description("Http client idle connections")
-            .register(Metrics.globalRegistry)
     }
 
     override suspend fun performPayment(
@@ -134,7 +115,12 @@ class PaymentExternalSystemAdapterImpl(
 
             try {
                 val startTime = now()
-                val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
+                val response = withContext(Dispatchers.IO) {
+                    client.sendAsync(
+                        request,
+                        HttpResponse.BodyHandlers.ofString()
+                    ).await()
+                }
                 val duration = now() - startTime
 
                 val body = try {
