@@ -3,6 +3,7 @@ package ru.quipy.payments.logic
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.future.await
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -18,6 +19,7 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.pow
 
 // Advice: always treat time as a Duration
@@ -32,6 +34,30 @@ class PaymentExternalSystemAdapterImpl(
 ) : PaymentExternalSystemAdapter {
 
     private val scope = CoroutineScope(Dispatchers.IO)
+    
+    private val updateChannels = ConcurrentHashMap<UUID, Channel<suspend () -> Unit>>()
+    
+    private fun getOrCreateUpdateChannel(paymentId: UUID): Channel<suspend () -> Unit> {
+        return updateChannels.computeIfAbsent(paymentId) {
+            val channel = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+            scope.launch {
+                for (updateAction in channel) {
+                    try {
+                        updateAction()
+                    } catch (e: Exception) {
+                        logger.error("[$accountName] Failed to execute update for payment $paymentId", e)
+                    }
+                }
+            }
+            channel
+        }
+    }
+    
+    private fun scheduleUpdate(paymentId: UUID, action: suspend () -> Unit) {
+        scope.launch {
+            getOrCreateUpdateChannel(paymentId).send(action)
+        }
+    }
 
     companion object {
         val logger: Logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
@@ -65,7 +91,7 @@ class PaymentExternalSystemAdapterImpl(
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-        scope.launch {
+        scheduleUpdate(paymentId) {
             paymentESService.update(paymentId) {
                 it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
             }
@@ -99,7 +125,7 @@ class PaymentExternalSystemAdapterImpl(
             }
             if (now() + delayMs > deadlineMs) {
                 logger.error("[$accountName] Payment deadline exceeded for txId: $transactionId, payment: $paymentId")
-                scope.launch {
+                scheduleUpdate(paymentId) {
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded")
                     }
@@ -135,7 +161,7 @@ class PaymentExternalSystemAdapterImpl(
 
                 if (response.statusCode() in 200..299) {
                     // logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-                    scope.launch {
+                    scheduleUpdate(paymentId) {
                         paymentESService.update(paymentId) {
                             it.logProcessing(body.result, now(), transactionId, reason = body.message)
                         }
@@ -152,7 +178,7 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         logger.error("[$accountName] [ERROR] All retry attempts exhausted for txId: $transactionId, payment: $paymentId")
-        scope.launch {
+        scheduleUpdate(paymentId) {
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId, reason = "All retry attempts failed")
             }
