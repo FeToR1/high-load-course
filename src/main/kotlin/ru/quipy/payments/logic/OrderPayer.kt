@@ -37,7 +37,7 @@ class OrderPayer(
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val threadPoolSize = 64
+    private val threadPoolSize = 500
 
     private val paymentExecutor = ThreadPoolExecutor(
         threadPoolSize,
