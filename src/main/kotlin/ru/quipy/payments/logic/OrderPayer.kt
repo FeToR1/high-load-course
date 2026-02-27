@@ -6,6 +6,7 @@ import jakarta.annotation.PostConstruct
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import okhttp3.internal.wait
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -71,7 +72,7 @@ class OrderPayer(
         }
 
         scopeProvider.scope.launch {
-            val createdEvent = scopeProvider.esScope.async {
+            scopeProvider.esScope.launch {
                 paymentESService.create {
                     it.create(
                         paymentId,
@@ -79,8 +80,7 @@ class OrderPayer(
                         amount
                     )
                 }
-            }.await()
-            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+            }
 
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         }
