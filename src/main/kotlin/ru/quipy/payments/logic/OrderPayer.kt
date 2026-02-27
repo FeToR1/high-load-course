@@ -3,12 +3,14 @@ package ru.quipy.payments.logic
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
 import jakarta.annotation.PostConstruct
-import kotlinx.coroutines.*
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Service
+import ru.quipy.common.utils.BackgroundScopeProvider
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
 import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.common.utils.RateLimitExceededException
@@ -21,7 +23,7 @@ import java.util.concurrent.TimeUnit
 
 @Service
 class OrderPayer(
-    paymentAccounts: List<PaymentExternalSystemAdapter>,
+    paymentAccounts: List<PaymentExternalSystemAdapter>
 ) {
 
     companion object {
@@ -31,14 +33,13 @@ class OrderPayer(
     val processTime = paymentAccounts[0].averageProcessingTime().toMillis()
 
     @Autowired
+    private lateinit var scopeProvider: BackgroundScopeProvider
+
+    @Autowired
     private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
 
     @Autowired
     private lateinit var paymentService: PaymentService
-
-    @Autowired
-    @Qualifier("eventSourcingDispatcher")
-    private lateinit var esDispatcher: ExecutorCoroutineDispatcher
 
     private val threadPoolSize = 64
 
@@ -51,8 +52,6 @@ class OrderPayer(
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
-
-    private val scope = CoroutineScope(paymentExecutor.asCoroutineDispatcher())
 
     @PostConstruct
     fun registerPoolSizeMetrics() {
@@ -71,8 +70,8 @@ class OrderPayer(
             throw RateLimitExceededException(processTime * 5)
         }
 
-        scope.launch {
-            val createdEvent = withContext(esDispatcher) {
+        scopeProvider.scope.launch {
+            val createdEvent = scopeProvider.esScope.async {
                 paymentESService.create {
                     it.create(
                         paymentId,
@@ -80,7 +79,7 @@ class OrderPayer(
                         amount
                     )
                 }
-            }
+            }.await()
             logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
