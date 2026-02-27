@@ -14,6 +14,4 @@ class OngoingWindow(
     fun release() {
         window.release()
     }
-
-    fun awaitingQueueSize(): Int = window.availablePermits
 }
