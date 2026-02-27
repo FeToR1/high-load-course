@@ -59,6 +59,7 @@ class PaymentExternalSystemAdapterImpl(
         deadline: Long
     ) {
         // logger.warn("[$accountName] Submitting payment request for payment $paymentId")
+        // test
 
         val transactionId = UUID.randomUUID()
 
