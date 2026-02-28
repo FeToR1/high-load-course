@@ -2,13 +2,12 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import io.micrometer.core.instrument.Gauge
-import io.micrometer.core.instrument.Metrics
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExecutorCoroutineDispatcher
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.future.await
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.OngoingWindow
@@ -17,14 +16,7 @@ import ru.quipy.core.EventSourcingService
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.payments.api.PaymentAggregate
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.time.Duration
 import java.util.*
-import java.util.concurrent.Executors
-import java.util.concurrent.ThreadPoolExecutor
 import kotlin.math.pow
 
 class PaymentExternalSystemAdapterImpl(
@@ -53,23 +45,10 @@ class PaymentExternalSystemAdapterImpl(
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
 
-    private val httpClientExecutor = Executors.newFixedThreadPool(15)
-
-    private val client: HttpClient by lazy {
-        HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_2)
-            .executor(httpClientExecutor)
+    private val client: OkHttpClient by lazy {
+        OkHttpClient.Builder()
             .connectTimeout(monitoringService.get90thPercentileTimeout(accountName))
             .build()
-    }
-
-    init {
-        Gauge.builder("http_client_active_connections", (httpClientExecutor as ThreadPoolExecutor)::getActiveCount)
-            .description("Http client active connections")
-            .register(Metrics.globalRegistry)
-        Gauge.builder("http_client_total_connections", httpClientExecutor::getPoolSize)
-            .description("Http client idle connections")
-            .register(Metrics.globalRegistry)
     }
 
     override suspend fun performPayment(
@@ -78,27 +57,22 @@ class PaymentExternalSystemAdapterImpl(
         paymentStartedAt: Long,
         deadline: Long
     ) {
-        //logger.warn("[$accountName] Submitting payment request for payment $paymentId")
+        logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
 
-        scope.launch {
-            paymentESService.update(paymentId) {
-                it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
-            }
-        }
-
-        val request = HttpRequest.newBuilder()
-            .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
-            .POST(HttpRequest.BodyPublishers.noBody())
-            .timeout(Duration.ofSeconds(40))
+        val url =
+            "http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"
+        val request = Request.Builder()
+            .url(url)
+            .post("".toRequestBody("application/json".toMediaType()))
             .build()
 
         sendRequest(request, paymentId, transactionId, deadline * 1000)
     }
 
     suspend fun sendRequest(
-        request: HttpRequest,
+        request: Request,
         paymentId: UUID,
         transactionId: UUID,
         deadlineMs: Long
@@ -129,21 +103,23 @@ class PaymentExternalSystemAdapterImpl(
                 rateLimiter.tickAsync()
                 ongoingWindow.acquireAsync()
                 val startTime = now()
-                val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
+                val response: Response = withContext(Dispatchers.IO) {
+                    client.newCall(request).execute()
+                }
                 val duration = now() - startTime
 
                 val body = try {
-                    mapper.readValue(response.body(), ExternalSysResponse::class.java)
+                    mapper.readValue(response.body?.string() ?: "", ExternalSysResponse::class.java)
                 } catch (e: Exception) {
-                    logger.error("[$accountName] Failed to parse response for txId: $transactionId, payment: $paymentId, result code: ${response.statusCode()}, reason: ${response.body()}")
+                    logger.error("[$accountName] Failed to parse response for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
                     ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
 
                 monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
                 monitoringService.recordRequestDuration(duration, body.result)
 
-                if (response.statusCode() in 200..299) {
-                    //logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+                if (response.isSuccessful) {
+                    logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
                     scope.launch {
                         paymentESService.update(paymentId) {
                             it.logProcessing(body.result, now(), transactionId, reason = body.message)
@@ -154,7 +130,7 @@ class PaymentExternalSystemAdapterImpl(
                     return
                 }
 
-                logger.warn("[$accountName] Non-success status ${response.statusCode()} for txId: $transactionId, attempt $i")
+                logger.warn("[$accountName] Non-success status ${response.code} for txId: $transactionId, attempt $i")
 
             } catch (e: Exception) {
                 logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
