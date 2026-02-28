@@ -24,7 +24,6 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ThreadPoolExecutor
 import kotlin.math.pow
 
-// Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
@@ -80,8 +79,6 @@ class PaymentExternalSystemAdapterImpl(
 
         val transactionId = UUID.randomUUID()
 
-        // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
-        // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
         scope.launch {
             paymentESService.update(paymentId) {
                 it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))

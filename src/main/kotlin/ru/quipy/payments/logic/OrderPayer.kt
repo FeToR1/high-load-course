@@ -3,10 +3,7 @@ package ru.quipy.payments.logic
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
 import jakarta.annotation.PostConstruct
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExecutorCoroutineDispatcher
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
