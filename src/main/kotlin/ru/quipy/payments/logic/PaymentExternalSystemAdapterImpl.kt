@@ -4,8 +4,11 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExecutorCoroutineDispatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.future.await
+import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.OngoingWindow
@@ -32,7 +35,7 @@ class PaymentExternalSystemAdapterImpl(
     private val monitoringService: MonitoringService,
     private val ongoingWindow: OngoingWindow,
     private val rateLimiter: SlidingWindowRateLimiter,
-    val esDispatcher: ExecutorCoroutineDispatcher
+    esDispatcher: ExecutorCoroutineDispatcher
 ) : PaymentExternalSystemAdapter {
 
     private val scope = CoroutineScope(esDispatcher)
@@ -91,24 +94,18 @@ class PaymentExternalSystemAdapterImpl(
             .timeout(Duration.ofSeconds(40))
             .build()
 
-        ongoingWindow.acquireAsync()
-        try {
-            sendRequest(request, paymentId, transactionId, deadline * 1000, esDispatcher)
-        } finally {
-            ongoingWindow.release()
-        }
+        sendRequest(request, paymentId, transactionId, deadline * 1000)
     }
 
     suspend fun sendRequest(
         request: HttpRequest,
         paymentId: UUID,
         transactionId: UUID,
-        deadlineMs: Long,
-        esDispatcher: CoroutineDispatcher
+        deadlineMs: Long
     ) {
         for (i in 1..MAX_RETRIES) {
-            rateLimiter.tickAsync()
             val delayMs = if (i == 1) 0L else (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(i - 1)).toLong()
+
             if (i > 1) {
                 monitoringService.increaseRetryCounter()
             }
@@ -129,6 +126,8 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             try {
+                rateLimiter.tickAsync()
+                ongoingWindow.acquireAsync()
                 val startTime = now()
                 val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
                 val duration = now() - startTime
@@ -154,10 +153,13 @@ class PaymentExternalSystemAdapterImpl(
                     monitoringService.increaseRequestsCounter(requestType)
                     return
                 }
+
                 logger.warn("[$accountName] Non-success status ${response.statusCode()} for txId: $transactionId, attempt $i")
 
             } catch (e: Exception) {
                 logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+            } finally {
+                ongoingWindow.release()
             }
         }
 
