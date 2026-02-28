@@ -19,7 +19,7 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.util.*
 import kotlin.math.pow
 
-class PaymentExternalSystemAdapterImpl(
+class PaymentExternalSystemAdapter(
     private val properties: PaymentAccountProperties,
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
@@ -28,7 +28,7 @@ class PaymentExternalSystemAdapterImpl(
     private val ongoingWindow: OngoingWindow,
     private val rateLimiter: SlidingWindowRateLimiter,
     esDispatcher: ExecutorCoroutineDispatcher
-) : PaymentExternalSystemAdapter {
+) {
 
     private val scope = CoroutineScope(esDispatcher)
 
@@ -51,11 +51,11 @@ class PaymentExternalSystemAdapterImpl(
             .build()
     }
 
-    override suspend fun performPayment(
+    suspend fun performPayment(
         paymentId: UUID,
         amount: Int,
         paymentStartedAt: Long,
-        deadline: Long
+        deadlineTimestampMs: Long
     ) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
@@ -68,7 +68,7 @@ class PaymentExternalSystemAdapterImpl(
             .post("".toRequestBody("application/json".toMediaType()))
             .build()
 
-        sendRequest(request, paymentId, transactionId, deadline * 1000)
+        sendRequest(request, paymentId, transactionId, deadlineTimestampMs)
     }
 
     suspend fun sendRequest(
@@ -148,17 +148,11 @@ class PaymentExternalSystemAdapterImpl(
         monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
     }
 
-    override fun price() = properties.price
+    fun rateLimitPerSec() = properties.rateLimitPerSec
 
-    override fun isEnabled() = properties.enabled
+    fun parallelRequests() = properties.parallelRequests
 
-    override fun rateLimitPerSec() = properties.rateLimitPerSec
-
-    override fun parallelRequests() = properties.parallelRequests
-
-    override fun name() = properties.accountName
-
-    override fun averageProcessingTime() = properties.averageProcessingTime
+    fun averageProcessingTime() = properties.averageProcessingTime
 }
 
 fun now() = System.currentTimeMillis()

@@ -7,15 +7,15 @@ import java.util.function.Supplier
 @Service
 class PaymentServiceImpl(
     private val accountProvider: Supplier<PaymentExternalSystemAdapter>
-) : PaymentService {
+) {
 
-    override suspend fun submitPaymentRequest(
+    suspend fun submitPaymentRequest(
         paymentId: UUID,
         amount: Int,
         paymentStartedAt: Long,
-        deadline: Long
+        deadlineTimestampMs: Long
     ) {
         val account = accountProvider.get()
-        account.performPayment(paymentId, amount, paymentStartedAt, deadline)
+        account.performPayment(paymentId, amount, paymentStartedAt, deadlineTimestampMs)
     }
 }

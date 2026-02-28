@@ -34,7 +34,7 @@ class OrderPayer(
     private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
 
     @Autowired
-    private lateinit var paymentService: PaymentService
+    private lateinit var paymentService: PaymentServiceImpl
 
     @Autowired
     @Qualifier("eventSourcingDispatcher")
