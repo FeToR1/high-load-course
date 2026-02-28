@@ -6,6 +6,7 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import ru.quipy.common.utils.OngoingWindow
@@ -24,6 +25,7 @@ import java.util.*
 
 
 @Configuration
+@ConfigurationProperties(prefix = "payment")
 class PaymentAccountsConfig {
     companion object {
         private val javaClient = HttpClient.newBuilder().build()
@@ -36,7 +38,6 @@ class PaymentAccountsConfig {
     @Value("\${payment.service-name}")
     lateinit var serviceName: String
 
-    @Value("\${payment.token}")
     lateinit var token: String
 
     @Value("#{'\${payment.accounts}'.split(',')}")
