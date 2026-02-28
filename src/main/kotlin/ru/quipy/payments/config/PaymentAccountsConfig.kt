@@ -27,17 +27,11 @@ import java.util.*
 @Configuration
 @ConfigurationProperties(prefix = "payment")
 class PaymentAccountsConfig {
-    companion object {
-        private val javaClient = HttpClient.newBuilder().build()
-        private val mapper = ObjectMapper().registerKotlinModule().registerModules(JavaTimeModule())
-    }
+    private val javaClient = HttpClient.newBuilder().build()
+    private val mapper = ObjectMapper().registerKotlinModule().registerModules(JavaTimeModule())
 
-    @Value("\${payment.hostPort}")
     lateinit var paymentProviderHostPort: String
-
-    @Value("\${payment.service-name}")
     lateinit var serviceName: String
-
     lateinit var token: String
 
     @Value("#{'\${payment.accounts}'.split(',')}")
