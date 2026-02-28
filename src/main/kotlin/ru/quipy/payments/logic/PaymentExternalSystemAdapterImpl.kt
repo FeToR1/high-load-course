@@ -108,23 +108,39 @@ class PaymentExternalSystemAdapterImpl(
         maxAttempts = MAX_RETRIES,
         backoff = Backoff(delay = (RETRY_DELAY_COEFF * 1000).toLong(), multiplier = RETRY_DELAY_BASE)
     )
-    private suspend fun sendRequestWithRetry(
+    private suspend fun sendRequest(
         request: HttpRequest,
         paymentId: UUID,
-        transactionId: UUID
+        transactionId: UUID,
+        deadlineMs: Long
     ): ExternalSysResponse {
-        rateLimiter.tickAsync()
         val startTime = now()
+
+        if (startTime > deadlineMs) {
+            logger.error("[$accountName] [ERROR] Payment deadline exceeded for txId: $transactionId, payment: $paymentId")
+            scope.launch {
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded")
+                }
+            }
+            monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
+            return ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, "Deadline exceeded")
+        }
+
+        rateLimiter.tickAsync()
         val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
         val duration = now() - startTime
+
         val body = try {
             mapper.readValue(response.body(), ExternalSysResponse::class.java)
         } catch (e: Exception) {
             logger.error("[$accountName] [ERROR] Failed to parse response for txId: $transactionId, payment: $paymentId, result code: ${response.statusCode()}, reason: ${response.body()}")
             ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
         }
+
         monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
         monitoringService.recordRequestDuration(duration, body.result)
+
         if (response.statusCode() in 200..299) {
             logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
             scope.launch {
@@ -138,6 +154,7 @@ class PaymentExternalSystemAdapterImpl(
             logger.warn("[$accountName] Non-success status ${response.statusCode()} for txId: $transactionId")
             throw RuntimeException("Non-success status")
         }
+
         return body
     }
 
@@ -156,26 +173,6 @@ class PaymentExternalSystemAdapterImpl(
         }
         monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
         return ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, "All retry attempts failed")
-    }
-
-    private suspend fun sendRequest(
-        request: HttpRequest,
-        paymentId: UUID,
-        transactionId: UUID,
-        deadlineMs: Long
-    ) {
-        if (now() > deadlineMs) {
-            logger.error("[$accountName] [ERROR] Payment deadline exceeded for txId: $transactionId, payment: $paymentId")
-            scope.launch {
-                paymentESService.update(paymentId) {
-                    it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded")
-                }
-            }
-            monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
-            return
-        }
-
-        sendRequestWithRetry(request, paymentId, transactionId)
     }
 
     override fun price() = properties.price
