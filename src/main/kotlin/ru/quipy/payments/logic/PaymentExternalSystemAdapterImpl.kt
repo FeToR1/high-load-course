@@ -75,7 +75,7 @@ class PaymentExternalSystemAdapterImpl(
         paymentStartedAt: Long,
         deadline: Long
     ) {
-        logger.warn("[$accountName] Submitting payment request for payment $paymentId")
+        //logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
 
@@ -113,7 +113,7 @@ class PaymentExternalSystemAdapterImpl(
                 monitoringService.increaseRetryCounter()
             }
             if (now() + delayMs > deadlineMs) {
-                logger.error("[$accountName] [ERROR] Payment deadline exceeded for txId: $transactionId, payment: $paymentId")
+                logger.error("[$accountName] Payment deadline exceeded for txId: $transactionId, payment: $paymentId")
                 scope.launch {
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded")
@@ -136,7 +136,7 @@ class PaymentExternalSystemAdapterImpl(
                 val body = try {
                     mapper.readValue(response.body(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
-                    logger.error("[$accountName] [ERROR] Failed to parse response for txId: $transactionId, payment: $paymentId, result code: ${response.statusCode()}, reason: ${response.body()}")
+                    logger.error("[$accountName] Failed to parse response for txId: $transactionId, payment: $paymentId, result code: ${response.statusCode()}, reason: ${response.body()}")
                     ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
 
@@ -144,7 +144,7 @@ class PaymentExternalSystemAdapterImpl(
                 monitoringService.recordRequestDuration(duration, body.result)
 
                 if (response.statusCode() in 200..299) {
-                    logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+                    //logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
                     scope.launch {
                         paymentESService.update(paymentId) {
                             it.logProcessing(body.result, now(), transactionId, reason = body.message)
@@ -161,7 +161,7 @@ class PaymentExternalSystemAdapterImpl(
             }
         }
 
-        logger.error("[$accountName] [ERROR] All retry attempts exhausted for txId: $transactionId, payment: $paymentId")
+        logger.error("[$accountName] All retry attempts exhausted for txId: $transactionId, payment: $paymentId")
         scope.launch {
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId, reason = "All retry attempts failed")
