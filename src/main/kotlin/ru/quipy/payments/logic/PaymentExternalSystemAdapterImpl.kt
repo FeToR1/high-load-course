@@ -8,8 +8,6 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.future.await
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Autowired
-import ru.quipy.common.utils.BackgroundScopeProvider
 import ru.quipy.common.utils.OngoingWindow
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
@@ -34,11 +32,11 @@ class PaymentExternalSystemAdapterImpl(
     private val token: String,
     private val monitoringService: MonitoringService,
     private val ongoingWindow: OngoingWindow,
-    private val rateLimiter: SlidingWindowRateLimiter
+    private val rateLimiter: SlidingWindowRateLimiter,
+    val esDispatcher: ExecutorCoroutineDispatcher
 ) : PaymentExternalSystemAdapter {
 
-    @Autowired
-    private lateinit var backgroundScopeProvider: BackgroundScopeProvider
+    private val scope = CoroutineScope(esDispatcher)
 
     companion object {
         val logger: Logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
@@ -84,7 +82,7 @@ class PaymentExternalSystemAdapterImpl(
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-        backgroundScopeProvider.esScope.launch {
+        scope.launch {
             paymentESService.update(paymentId) {
                 it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
             }
@@ -98,7 +96,7 @@ class PaymentExternalSystemAdapterImpl(
 
         ongoingWindow.acquireAsync()
         try {
-            sendRequest(request, paymentId, transactionId, deadline * 1000)
+            sendRequest(request, paymentId, transactionId, deadline * 1000, esDispatcher)
         } finally {
             ongoingWindow.release()
         }
@@ -108,7 +106,8 @@ class PaymentExternalSystemAdapterImpl(
         request: HttpRequest,
         paymentId: UUID,
         transactionId: UUID,
-        deadlineMs: Long
+        deadlineMs: Long,
+        esDispatcher: CoroutineDispatcher
     ) {
         for (i in 1..MAX_RETRIES) {
             rateLimiter.tickAsync()
@@ -118,7 +117,7 @@ class PaymentExternalSystemAdapterImpl(
             }
             if (now() + delayMs > deadlineMs) {
                 logger.error("[$accountName] [ERROR] Payment deadline exceeded for txId: $transactionId, payment: $paymentId")
-                backgroundScopeProvider.esScope.launch {
+                scope.launch {
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded")
                     }
@@ -149,7 +148,7 @@ class PaymentExternalSystemAdapterImpl(
 
                 if (response.statusCode() in 200..299) {
                     logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-                    backgroundScopeProvider.esScope.launch {
+                    scope.launch {
                         paymentESService.update(paymentId) {
                             it.logProcessing(body.result, now(), transactionId, reason = body.message)
                         }
@@ -166,7 +165,7 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         logger.error("[$accountName] [ERROR] All retry attempts exhausted for txId: $transactionId, payment: $paymentId")
-        backgroundScopeProvider.esScope.launch {
+        scope.launch {
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId, reason = "All retry attempts failed")
             }
