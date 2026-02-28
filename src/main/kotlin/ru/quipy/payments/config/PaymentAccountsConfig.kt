@@ -4,9 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
-import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import ru.quipy.common.utils.OngoingWindow
@@ -17,7 +17,6 @@ import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.logic.PaymentAccountProperties
 import ru.quipy.payments.logic.PaymentAggregateState
 import ru.quipy.payments.logic.PaymentExternalSystemAdapter
-import ru.quipy.payments.logic.PaymentExternalSystemAdapterImpl
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -26,33 +25,25 @@ import java.util.*
 
 
 @Configuration
+@ConfigurationProperties(prefix = "payment")
 class PaymentAccountsConfig {
-    companion object {
-        private val javaClient = HttpClient.newBuilder().build()
-        private val mapper = ObjectMapper().registerKotlinModule().registerModules(JavaTimeModule())
-    }
+    private val javaClient = HttpClient.newBuilder().build()
+    private val mapper = ObjectMapper().registerKotlinModule().registerModules(JavaTimeModule())
 
-    @Value("\${payment.hostPort}")
     lateinit var paymentProviderHostPort: String
-
-    @Value("\${payment.service-name}")
     lateinit var serviceName: String
-
-    @Value("\${payment.token}")
     lateinit var token: String
 
     @Value("#{'\${payment.accounts}'.split(',')}")
     lateinit var allowedAccounts: List<String>
 
-    @Autowired
-    private lateinit var monitoringService: MonitoringService
-
-    @Autowired
-    @Qualifier("eventSourcingDispatcher")
-    private lateinit var esDispatcher: ExecutorCoroutineDispatcher
-
     @Bean
-    fun accountAdapters(paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>): List<PaymentExternalSystemAdapter> {
+    fun accountAdapters(
+        paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
+        monitoringService: MonitoringService,
+        @Qualifier("eventSourcingDispatcher")
+        esDispatcher: ExecutorCoroutineDispatcher
+    ): List<PaymentExternalSystemAdapter> {
         val request = HttpRequest.newBuilder()
             .uri(URI("http://${paymentProviderHostPort}/external/accounts?serviceName=$serviceName&token=$token"))
             .GET()
@@ -69,7 +60,7 @@ class PaymentAccountsConfig {
             .map { it.copy(enabled = true) }
             .onEach(::println)
             .map {
-                PaymentExternalSystemAdapterImpl(
+                PaymentExternalSystemAdapter(
                     it,
                     paymentService,
                     paymentProviderHostPort,

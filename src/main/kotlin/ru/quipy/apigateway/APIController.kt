@@ -64,14 +64,19 @@ class APIController(
     }
 
     @PostMapping("/orders/{orderId}/payment")
-    fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
+    fun payOrder(
+        @PathVariable orderId: UUID,
+        @RequestParam("deadline") deadlineTimestampMs: Long
+    ): PaymentSubmissionDto {
         monitoringService.increaseRequestsCounter(RequestType.INCOMING)
+
+        val deadline = Instant.ofEpochMilli(deadlineTimestampMs)
 
         initBucketOnce(deadline)
 
         if (!bucket!!.tick()) {
             val processTime = account.averageProcessingTime().toMillis()
-            throw RateLimitExceededException(5 * processTime)
+            throw RateLimitExceededException(processTime * 5) // стоит завязаться на ведро
         }
 
         val paymentId = UUID.randomUUID()
@@ -84,7 +89,7 @@ class APIController(
         return PaymentSubmissionDto(createdAt, paymentId)
     }
 
-    private fun initBucketOnce(deadlineMillis: Long) {
+    private fun initBucketOnce(deadline: Instant) {
         if (bucket != null) {
             return
         }
@@ -94,7 +99,7 @@ class APIController(
                 return
             }
 
-            bucket = rateLimiterFactory.createForAccount(account, Instant.ofEpochMilli(deadlineMillis))
+            bucket = rateLimiterFactory.createForAccount(account, deadline)
         }
     }
 

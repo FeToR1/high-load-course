@@ -2,10 +2,11 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import io.micrometer.core.instrument.Gauge
-import io.micrometer.core.instrument.Metrics
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.future.await
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.time.delay
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.OngoingWindow
@@ -19,12 +20,11 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
+import java.time.Instant
 import java.util.*
-import java.util.concurrent.Executors
-import java.util.concurrent.ThreadPoolExecutor
 import kotlin.math.pow
 
-class PaymentExternalSystemAdapterImpl(
+class PaymentExternalSystemAdapter(
     private val properties: PaymentAccountProperties,
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
@@ -32,8 +32,8 @@ class PaymentExternalSystemAdapterImpl(
     private val monitoringService: MonitoringService,
     private val ongoingWindow: OngoingWindow,
     private val rateLimiter: SlidingWindowRateLimiter,
-    val esDispatcher: ExecutorCoroutineDispatcher
-) : PaymentExternalSystemAdapter {
+    esDispatcher: ExecutorCoroutineDispatcher
+) {
 
     private val scope = CoroutineScope(esDispatcher)
 
@@ -43,95 +43,69 @@ class PaymentExternalSystemAdapterImpl(
         val mapper = ObjectMapper().registerKotlinModule()
 
         const val RETRY_DELAY_BASE = 2.0
-        const val RETRY_DELAY_COEFF = 0.225
+        const val RETRY_DELAY_COEFF = 25
         const val MAX_RETRIES = 3
     }
-
-    private val serviceName = properties.serviceName
-    private val accountName = properties.accountName
-
-    private val httpClientExecutor = Executors.newFixedThreadPool(15)
 
     private val client: HttpClient by lazy {
         HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_2)
-            .executor(httpClientExecutor)
-            .connectTimeout(monitoringService.get90thPercentileTimeout(accountName))
             .build()
     }
 
-    init {
-        Gauge.builder("http_client_active_connections", (httpClientExecutor as ThreadPoolExecutor)::getActiveCount)
-            .description("Http client active connections")
-            .register(Metrics.globalRegistry)
-        Gauge.builder("http_client_total_connections", httpClientExecutor::getPoolSize)
-            .description("Http client idle connections")
-            .register(Metrics.globalRegistry)
-    }
-
-    override suspend fun performPayment(
+    suspend fun performPayment(
         paymentId: UUID,
         amount: Int,
         paymentStartedAt: Long,
-        deadline: Long
+        deadline: Instant
     ) {
-        //logger.warn("[$accountName] Submitting payment request for payment $paymentId")
-
         val transactionId = UUID.randomUUID()
 
-        scope.launch {
-            paymentESService.update(paymentId) {
-                it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
-            }
-        }
-
         val request = HttpRequest.newBuilder()
-            .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
+            .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=${properties.serviceName}&token=$token&accountName=${properties.accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
             .POST(HttpRequest.BodyPublishers.noBody())
             .timeout(Duration.ofSeconds(40))
             .build()
 
-        ongoingWindow.acquireAsync()
-        try {
-            sendRequest(request, paymentId, transactionId, deadline * 1000, esDispatcher)
-        } finally {
-            ongoingWindow.release()
-        }
+        sendRequest(request, paymentId, transactionId, deadline)
     }
 
     suspend fun sendRequest(
         request: HttpRequest,
         paymentId: UUID,
         transactionId: UUID,
-        deadlineMs: Long,
-        esDispatcher: CoroutineDispatcher
+        deadline: Instant
     ) {
+        val accountName = properties.accountName
+
         for (i in 1..MAX_RETRIES) {
-            rateLimiter.tickAsync()
-            val delayMs = if (i == 1) 0L else (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(i - 1) * 1000).toLong()
+            val retryDelay = calculateDelay(i)
+
             if (i > 1) {
                 monitoringService.increaseRetryCounter()
             }
-            if (now() + delayMs > deadlineMs) {
-                logger.error("[$accountName] Payment deadline exceeded for txId: $transactionId, payment: $paymentId")
+            if (now().plus(retryDelay) > deadline) {
+                logger.error("[$accountName] Payment deadline exceeded for txId: $transactionId, payment: $paymentId. Attempt $i")
                 scope.launch {
                     paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Deadline exceeded")
+                        it.logProcessing(false, now().toEpochMilli(), transactionId, reason = "Deadline exceeded")
                     }
                 }
                 monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
                 return
             }
 
-            if (delayMs > 0) {
-                logger.warn("[$accountName] RETRY attempt $i after ${delayMs}ms delay")
-                delay(delayMs)
+            if (retryDelay > Duration.ZERO) {
+                logger.warn("[$accountName] RETRY attempt $i after ${retryDelay}ms delay")
+                delay(retryDelay)
             }
 
             try {
+                rateLimiter.tickAsync()
+                ongoingWindow.acquireAsync()
                 val startTime = now()
                 val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
-                val duration = now() - startTime
+                val duration = Duration.between(startTime, now()).toMillis()
 
                 val body = try {
                     mapper.readValue(response.body(), ExternalSysResponse::class.java)
@@ -144,43 +118,42 @@ class PaymentExternalSystemAdapterImpl(
                 monitoringService.recordRequestDuration(duration, body.result)
 
                 if (response.statusCode() in 200..299) {
-                    //logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
                     scope.launch {
                         paymentESService.update(paymentId) {
-                            it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                            it.logProcessing(body.result, now().toEpochMilli(), transactionId, reason = body.message)
                         }
                     }
                     val requestType = if (body.result) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
                     monitoringService.increaseRequestsCounter(requestType)
                     return
                 }
+
                 logger.warn("[$accountName] Non-success status ${response.statusCode()} for txId: $transactionId, attempt $i")
 
             } catch (e: Exception) {
                 logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+            } finally {
+                ongoingWindow.release()
             }
         }
 
-        logger.error("[$accountName] All retry attempts exhausted for txId: $transactionId, payment: $paymentId")
+        logger.error("[${accountName}] All retry attempts exhausted for txId: $transactionId, payment: $paymentId")
         scope.launch {
             paymentESService.update(paymentId) {
-                it.logProcessing(false, now(), transactionId, reason = "All retry attempts failed")
+                it.logProcessing(false, now().toEpochMilli(), transactionId, reason = "All retry attempts failed")
             }
         }
         monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
     }
 
-    override fun price() = properties.price
+    private fun calculateDelay(i: Int): Duration {
+        val durationMs = if (i == 1) 0L else (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(i - 1)).toLong()
+        return Duration.ofMillis(durationMs)
+    }
 
-    override fun isEnabled() = properties.enabled
-
-    override fun rateLimitPerSec() = properties.rateLimitPerSec
-
-    override fun parallelRequests() = properties.parallelRequests
-
-    override fun name() = properties.accountName
-
-    override fun averageProcessingTime() = properties.averageProcessingTime
+    fun rateLimitPerSec() = properties.rateLimitPerSec
+    fun parallelRequests() = properties.parallelRequests
+    fun averageProcessingTime() = properties.averageProcessingTime
 }
 
-fun now() = System.currentTimeMillis()
+fun now(): Instant = Instant.now()

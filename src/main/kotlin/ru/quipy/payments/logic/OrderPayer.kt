@@ -6,7 +6,6 @@ import jakarta.annotation.PostConstruct
 import kotlinx.coroutines.*
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
@@ -14,6 +13,7 @@ import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.common.utils.RateLimitExceededException
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import java.time.Instant
 import java.util.*
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
@@ -22,32 +22,20 @@ import java.util.concurrent.TimeUnit
 @Service
 class OrderPayer(
     paymentAccounts: List<PaymentExternalSystemAdapter>,
+    private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
+    private val paymentService: PaymentService,
+    @Qualifier("eventSourcingDispatcher")
+    private val esDispatcher: ExecutorCoroutineDispatcher
 ) {
 
-    companion object {
-        val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
-    }
-
-    val processTime = paymentAccounts[0].averageProcessingTime().toMillis()
-
-    @Autowired
-    private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
-
-    @Autowired
-    private lateinit var paymentService: PaymentService
-
-    @Autowired
-    @Qualifier("eventSourcingDispatcher")
-    private lateinit var esDispatcher: ExecutorCoroutineDispatcher
-
-    private val threadPoolSize = 64
+    private val processTime = paymentAccounts[0].averageProcessingTime().toMillis()
 
     private val paymentExecutor = ThreadPoolExecutor(
-        threadPoolSize,
-        threadPoolSize,
+        THREAD_POOL_SIZE,
+        THREAD_POOL_SIZE,
         0,
         TimeUnit.SECONDS,
-        LinkedBlockingQueue(1000),
+        LinkedBlockingQueue(4000),
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
@@ -64,11 +52,11 @@ class OrderPayer(
             .register(Metrics.globalRegistry)
     }
 
-    fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
+    fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Instant): Long {
         val createdAt = System.currentTimeMillis()
 
         if (paymentExecutor.queue.remainingCapacity() == 0) {
-            throw RateLimitExceededException(processTime * 5)
+            throw RateLimitExceededException(processTime * 100) // стоит рассмотреть зависимость времени от deadline
         }
 
         scope.launch {
@@ -87,5 +75,10 @@ class OrderPayer(
         }
 
         return createdAt
+    }
+
+    companion object {
+        val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
+        const val THREAD_POOL_SIZE = 64
     }
 }

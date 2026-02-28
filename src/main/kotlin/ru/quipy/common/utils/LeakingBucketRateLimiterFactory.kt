@@ -28,16 +28,14 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
         logger.info("Leaking bucket size: $bucketSize")
 
         return LeakingBucketRateLimiter(
-            account.rateLimitPerSec().toLong(),
+            account.rateLimitPerSec().toLong(), // а тут точно rps должен быть, а не меньшее из rps и parallel?
             Duration.ofSeconds(1),
             bucketSize
         )
     }
 
     private fun calculateTotalProcessingTime(account: PaymentExternalSystemAdapter): Duration {
-        return account.averageProcessingTime()
-            .multipliedBy(1L + PAYMENT_SYSTEM_ERROR_COEFF)
-            .plus(APP_PROCESSING_TIME)
+        return account.averageProcessingTime().plus(APP_PROCESSING_TIME)
     }
 
     private fun calculateBucketSize(
@@ -45,7 +43,6 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
         ttl: Duration,
         totalProcessingTime: Duration
     ): Int {
-        // max time a request can stay in the queue
         val processingWaitLimit = ttl.minus(totalProcessingTime)
 
         val effectiveRps = min(
@@ -59,7 +56,6 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
     }
 
     companion object {
-        private const val PAYMENT_SYSTEM_ERROR_COEFF = 0
         private const val DEFAULT_BUCKET_SIZE = 100
         private val logger = LoggerFactory.getLogger(LeakingBucketRateLimiterFactory::class.java)
         private val APP_PROCESSING_TIME = Duration.ofMillis(350)
