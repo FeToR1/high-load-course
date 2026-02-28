@@ -43,7 +43,7 @@ class PaymentExternalSystemAdapterImpl(
         val mapper = ObjectMapper().registerKotlinModule()
 
         const val RETRY_DELAY_BASE = 2.0
-        const val RETRY_DELAY_COEFF = 0.225
+        const val RETRY_DELAY_COEFF = 0.1667
         const val MAX_RETRIES = 3
     }
 
@@ -108,7 +108,7 @@ class PaymentExternalSystemAdapterImpl(
     ) {
         for (i in 1..MAX_RETRIES) {
             rateLimiter.tickAsync()
-            val delayMs = if (i == 1) 0L else (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(i - 1) * 1000).toLong()
+            val delayMs = if (i == 1) 0L else (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(i - 1)).toLong()
             if (i > 1) {
                 monitoringService.increaseRetryCounter()
             }
