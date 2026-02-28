@@ -6,7 +6,6 @@ import jakarta.annotation.PostConstruct
 import kotlinx.coroutines.*
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
@@ -23,30 +22,18 @@ import java.util.concurrent.TimeUnit
 @Service
 class OrderPayer(
     paymentAccounts: List<PaymentExternalSystemAdapter>,
+    private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
+    private val paymentService: PaymentService,
+    @Qualifier("eventSourcingDispatcher")
+    private val esDispatcher: ExecutorCoroutineDispatcher
 ) {
 
-    companion object {
-        val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
-    }
-
-    val processTime = paymentAccounts[0].averageProcessingTime().toMillis()
-
-    @Autowired
-    private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
-
-    @Autowired
-    private lateinit var paymentService: PaymentServiceImpl
-
-    @Autowired
-    @Qualifier("eventSourcingDispatcher")
-    private lateinit var esDispatcher: ExecutorCoroutineDispatcher
-
-    private val threadPoolSize = 64
+    private val processTime = paymentAccounts[0].averageProcessingTime().toMillis()
 
     private val paymentExecutor = ThreadPoolExecutor(
-        threadPoolSize,
-        threadPoolSize,
-        0,
+        THREAD_POOL_SIZE,
+        5000,
+        100,
         TimeUnit.SECONDS,
         LinkedBlockingQueue(4000),
         NamedThreadFactory("payment-submission-executor"),
@@ -88,5 +75,10 @@ class OrderPayer(
         }
 
         return createdAt
+    }
+
+    companion object {
+        val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
+        const val THREAD_POOL_SIZE = 64
     }
 }

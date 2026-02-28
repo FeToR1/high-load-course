@@ -6,7 +6,7 @@ import java.util.*
 import java.util.function.Supplier
 
 @Service
-class PaymentServiceImpl(
+class PaymentService(
     private val accountProvider: Supplier<PaymentExternalSystemAdapter>
 ) {
 
