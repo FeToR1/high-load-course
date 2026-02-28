@@ -2,7 +2,11 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExecutorCoroutineDispatcher
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.future.await
+import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.OngoingWindow
@@ -102,9 +106,7 @@ class PaymentExternalSystemAdapter(
                 rateLimiter.tickAsync()
                 ongoingWindow.acquireAsync()
                 val startTime = now()
-                val response = withContext(Dispatchers.IO) {
-                    client.send(request, HttpResponse.BodyHandlers.ofString())
-                }
+                val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
                 val duration = now() - startTime
 
                 val body = try {
