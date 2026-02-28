@@ -3,11 +3,6 @@ package ru.quipy.payments.logic
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import kotlinx.coroutines.*
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.OngoingWindow
@@ -16,6 +11,11 @@ import ru.quipy.core.EventSourcingService
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.payments.api.PaymentAggregate
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.time.Duration
 import java.util.*
 import kotlin.math.pow
 
@@ -38,16 +38,16 @@ class PaymentExternalSystemAdapter(
         val mapper = ObjectMapper().registerKotlinModule()
 
         const val RETRY_DELAY_BASE = 2.0
-        const val RETRY_DELAY_COEFF = 0.1667
+        const val RETRY_DELAY_COEFF = 25
         const val MAX_RETRIES = 3
     }
 
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
 
-    private val client: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(monitoringService.get90thPercentileTimeout(accountName))
+    private val client: HttpClient by lazy {
+        HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_2)
             .build()
     }
 
@@ -61,18 +61,17 @@ class PaymentExternalSystemAdapter(
 
         val transactionId = UUID.randomUUID()
 
-        val url =
-            "http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"
-        val request = Request.Builder()
-            .url(url)
-            .post("".toRequestBody("application/json".toMediaType()))
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
+            .POST(HttpRequest.BodyPublishers.noBody())
+            .timeout(Duration.ofSeconds(40))
             .build()
 
         sendRequest(request, paymentId, transactionId, deadlineTimestampMs)
     }
 
     suspend fun sendRequest(
-        request: Request,
+        request: HttpRequest,
         paymentId: UUID,
         transactionId: UUID,
         deadlineMs: Long
@@ -103,22 +102,22 @@ class PaymentExternalSystemAdapter(
                 rateLimiter.tickAsync()
                 ongoingWindow.acquireAsync()
                 val startTime = now()
-                val response: Response = withContext(Dispatchers.IO) {
-                    client.newCall(request).execute()
+                val response = withContext(Dispatchers.IO) {
+                    client.send(request, HttpResponse.BodyHandlers.ofString())
                 }
                 val duration = now() - startTime
 
                 val body = try {
-                    mapper.readValue(response.body?.string() ?: "", ExternalSysResponse::class.java)
+                    mapper.readValue(response.body(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
-                    logger.error("[$accountName] Failed to parse response for txId: $transactionId, payment: $paymentId, result code: ${response.code}, reason: ${response.body?.string()}")
+                    logger.error("[$accountName] Failed to parse response for txId: $transactionId, payment: $paymentId, result code: ${response.statusCode()}, reason: ${response.body()}")
                     ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
 
                 monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
                 monitoringService.recordRequestDuration(duration, body.result)
 
-                if (response.isSuccessful) {
+                if (response.statusCode() in 200..299) {
                     logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
                     scope.launch {
                         paymentESService.update(paymentId) {
@@ -130,7 +129,7 @@ class PaymentExternalSystemAdapter(
                     return
                 }
 
-                logger.warn("[$accountName] Non-success status ${response.code} for txId: $transactionId, attempt $i")
+                logger.warn("[$accountName] Non-success status ${response.statusCode()} for txId: $transactionId, attempt $i")
 
             } catch (e: Exception) {
                 logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
