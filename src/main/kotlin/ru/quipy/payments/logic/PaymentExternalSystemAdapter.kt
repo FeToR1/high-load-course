@@ -61,8 +61,6 @@ class PaymentExternalSystemAdapter(
         paymentStartedAt: Long,
         deadlineTimestampMs: Long
     ) {
-        logger.warn("[$accountName] Submitting payment request for payment $paymentId")
-
         val transactionId = UUID.randomUUID()
 
         val request = HttpRequest.newBuilder()
@@ -120,7 +118,6 @@ class PaymentExternalSystemAdapter(
                 monitoringService.recordRequestDuration(duration, body.result)
 
                 if (response.statusCode() in 200..299) {
-                    logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
                     scope.launch {
                         paymentESService.update(paymentId) {
                             it.logProcessing(body.result, now(), transactionId, reason = body.message)
