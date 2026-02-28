@@ -7,13 +7,7 @@ class OngoingWindow(
 ) {
     private val window = Semaphore(maxWinSize)
 
-    suspend fun acquireAsync() {
-        window.acquire()
-    }
+    suspend fun acquireAsync() = window.acquire()
 
-    fun release() {
-        window.release()
-    }
-
-    fun awaitingQueueSize(): Int = window.availablePermits
+    fun release() = window.release()
 }
