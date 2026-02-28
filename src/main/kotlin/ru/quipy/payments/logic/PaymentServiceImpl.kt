@@ -1,6 +1,7 @@
 package ru.quipy.payments.logic
 
 import org.springframework.stereotype.Service
+import java.time.Instant
 import java.util.*
 import java.util.function.Supplier
 
@@ -13,9 +14,9 @@ class PaymentServiceImpl(
         paymentId: UUID,
         amount: Int,
         paymentStartedAt: Long,
-        deadlineTimestampMs: Long
+        deadline: Instant
     ) {
         val account = accountProvider.get()
-        account.performPayment(paymentId, amount, paymentStartedAt, deadlineTimestampMs)
+        account.performPayment(paymentId, amount, paymentStartedAt, deadline)
     }
 }

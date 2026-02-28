@@ -14,6 +14,7 @@ import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.common.utils.RateLimitExceededException
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import java.time.Instant
 import java.util.*
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
@@ -64,7 +65,7 @@ class OrderPayer(
             .register(Metrics.globalRegistry)
     }
 
-    fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
+    fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Instant): Long {
         val createdAt = System.currentTimeMillis()
 
         if (paymentExecutor.queue.remainingCapacity() == 0) {

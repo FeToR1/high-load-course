@@ -64,10 +64,15 @@ class APIController(
     }
 
     @PostMapping("/orders/{orderId}/payment")
-    fun payOrder(@PathVariable orderId: UUID, @RequestParam deadlineTimestampMs: Long): PaymentSubmissionDto {
+    fun payOrder(
+        @PathVariable orderId: UUID,
+        @RequestParam("deadline") deadlineTimestampMs: Long
+    ): PaymentSubmissionDto {
         monitoringService.increaseRequestsCounter(RequestType.INCOMING)
 
-        initBucketOnce(deadlineTimestampMs)
+        val deadline = Instant.ofEpochMilli(deadlineTimestampMs)
+
+        initBucketOnce(deadline)
 
         if (!bucket!!.tick()) {
             val processTime = account.averageProcessingTime().toMillis()
@@ -80,11 +85,11 @@ class APIController(
             it
         } ?: throw IllegalArgumentException("No such order $orderId")
 
-        val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadlineTimestampMs)
+        val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
         return PaymentSubmissionDto(createdAt, paymentId)
     }
 
-    private fun initBucketOnce(deadlineTimestampMs: Long) {
+    private fun initBucketOnce(deadline: Instant) {
         if (bucket != null) {
             return
         }
@@ -94,7 +99,7 @@ class APIController(
                 return
             }
 
-            bucket = rateLimiterFactory.createForAccount(account, Instant.ofEpochMilli(deadlineTimestampMs))
+            bucket = rateLimiterFactory.createForAccount(account, deadline)
         }
     }
 
