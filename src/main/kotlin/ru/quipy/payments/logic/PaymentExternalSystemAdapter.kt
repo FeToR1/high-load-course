@@ -85,7 +85,7 @@ class PaymentExternalSystemAdapter(
                 monitoringService.increaseRetryCounter()
             }
             if (now().plus(retryDelay) > deadline) {
-                logger.error("[$accountName] Payment deadline exceeded for txId: $transactionId, payment: $paymentId. Attempt $i")
+                logger.error("[$accountName] Payment deadline exceeded for txId: $transactionId, payment: $paymentId. Attempt $i. Deadline $deadline, Now ${now()}")
                 scope.launch {
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now().toEpochMilli(), transactionId, reason = "Deadline exceeded")
