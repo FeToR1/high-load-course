@@ -2,10 +2,14 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.github.resilience4j.kotlin.ratelimiter.executeSuspendFunction
+import io.github.resilience4j.ratelimiter.RateLimiter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.time.delay
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -28,8 +32,8 @@ class PaymentExternalSystemAdapter(
     private val paymentProviderHostPort: String,
     private val token: String,
     private val monitoringService: MonitoringService,
-    private val ongoingWindow: OngoingWindow,
-    private val rateLimiter: SlidingWindowRateLimiter,
+    private val ongoingWindow: Semaphore,
+    private val rateLimiter: RateLimiter,
     esDispatcher: ExecutorCoroutineDispatcher
 ) {
 
@@ -100,54 +104,10 @@ class PaymentExternalSystemAdapter(
                 delay(retryDelay)
             }
 
-            try {
-                rateLimiter.tickAsync()
-                ongoingWindow.acquireAsync()
-                val startTime = now()
-                val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
-                val duration = Duration.between(startTime, now()).toMillis()
-
-                val body = try {
-                    mapper.readValue(response.body(), ExternalSysResponse::class.java)
-                } catch (e: Exception) {
-                    logger.error("[$accountName] Failed to parse response for txId: $transactionId, payment: $paymentId, result code: ︠{response.statusCode()}, reason: ︠{response.body()}")
-                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+            ongoingWindow.withPermit {
+                rateLimiter.executeSuspendFunction {
+                    sendRequestReal(request, paymentId, transactionId, i)
                 }
-
-                monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
-                monitoringService.recordRequestDuration(duration, body.result)
-
-                if (response.statusCode() in 200..299) {
-                    scope.launch {
-                        paymentESService.update(paymentId) {
-                            it.logProcessing(
-                                body.result,
-                                now().toEpochMilli(),
-                                transactionId,
-                                reason = body.message
-                            )
-                        }
-                    }
-                    val requestType = if (body.result) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
-                    monitoringService.increaseRequestsCounter(requestType)
-                    return
-                }
-
-                logger.warn("[$accountName] Non-success status ${response.statusCode()} for txId: $transactionId, attempt $i")
-            } catch (e: HttpTimeoutException) {
-                logger.error(
-                    "[$accountName] Payment request timed out for txId: $transactionId, payment: $paymentId, attempt $i",
-                    e
-                )
-            } catch (e: HttpConnectTimeoutException) {
-                logger.error(
-                    "[$accountName] Connection timed out for txId: $transactionId, payment: $paymentId, attempt $i",
-                    e
-                )
-            } catch (e: Exception) {
-                logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-            } finally {
-                ongoingWindow.release()
             }
         }
 
@@ -158,6 +118,62 @@ class PaymentExternalSystemAdapter(
             }
         }
         monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
+    }
+
+    private suspend fun sendRequestReal(
+        request: HttpRequest,
+        paymentId: UUID,
+        transactionId: UUID,
+        i: Int
+    ) {
+        val accountName = properties.accountName
+
+        try {
+            val startTime = now()
+            val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
+            val duration = Duration.between(startTime, now()).toMillis()
+
+            val body = try {
+                mapper.readValue(response.body(), ExternalSysResponse::class.java)
+            } catch (e: Exception) {
+                logger.error("[$accountName] Failed to parse response for txId: $transactionId, payment: $paymentId, result code: ︠{response.statusCode()}, reason: ︠{response.body()}")
+                ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+            }
+
+            monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
+            monitoringService.recordRequestDuration(duration, body.result)
+
+            if (response.statusCode() in 200..299) {
+                scope.launch {
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(
+                            body.result,
+                            now().toEpochMilli(),
+                            transactionId,
+                            reason = body.message
+                        )
+                    }
+                }
+                val requestType =
+                    if (body.result) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
+                monitoringService.increaseRequestsCounter(requestType)
+                return
+            }
+
+            logger.warn("[$accountName] Non-success status ${response.statusCode()} for txId: $transactionId, attempt $i")
+        } catch (e: HttpTimeoutException) {
+            logger.error(
+                "[$accountName] Payment request timed out for txId: $transactionId, payment: $paymentId, attempt $i",
+                e
+            )
+        } catch (e: HttpConnectTimeoutException) {
+            logger.error(
+                "[$accountName] Connection timed out for txId: $transactionId, payment: $paymentId, attempt $i",
+                e
+            )
+        } catch (e: Exception) {
+            logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+        }
     }
 
     private fun calculateDelay(i: Int): Duration {

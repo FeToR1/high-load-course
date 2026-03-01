@@ -3,7 +3,10 @@ package ru.quipy.payments.config
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.github.resilience4j.ratelimiter.RateLimiter
+import io.github.resilience4j.ratelimiter.RateLimiterConfig
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
+import kotlinx.coroutines.sync.Semaphore
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.context.properties.ConfigurationProperties
@@ -21,6 +24,7 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.time.Duration
 import java.util.*
 
 
@@ -66,8 +70,12 @@ class PaymentAccountsConfig {
                     paymentProviderHostPort,
                     token,
                     monitoringService,
-                    OngoingWindow(it.parallelRequests),
-                    SlidingWindowRateLimiter(it.rateLimitPerSec.toLong()),
+                    Semaphore(it.parallelRequests),
+                    RateLimiter.of("rate-limiter", RateLimiterConfig.custom()
+                        .limitForPeriod(it.rateLimitPerSec)
+                        .limitRefreshPeriod(Duration.ofMillis(1000))
+                        .build()
+                    ),
                     esDispatcher
                 )
             }
