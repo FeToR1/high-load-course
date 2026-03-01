@@ -47,9 +47,6 @@ class PaymentExternalSystemAdapter(
         const val MAX_RETRIES = 3
     }
 
-    private val serviceName = properties.serviceName
-    private val accountName = properties.accountName
-
     private val client: HttpClient by lazy {
         HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_2)
@@ -65,7 +62,7 @@ class PaymentExternalSystemAdapter(
         val transactionId = UUID.randomUUID()
 
         val request = HttpRequest.newBuilder()
-            .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
+            .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=${properties.serviceName}&token=$token&accountName=${properties.accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
             .POST(HttpRequest.BodyPublishers.noBody())
             .timeout(Duration.ofSeconds(40))
             .build()
@@ -79,13 +76,15 @@ class PaymentExternalSystemAdapter(
         transactionId: UUID,
         deadline: Instant
     ) {
+        val accountName = properties.accountName
+
         for (i in 1..MAX_RETRIES) {
-            val requestDelay = calculateDelay(i)
+            val retryDelay = calculateDelay(i)
 
             if (i > 1) {
                 monitoringService.increaseRetryCounter()
             }
-            if (now().plus(requestDelay) > deadline) {
+            if (now().plus(retryDelay) > deadline) {
                 logger.error("[$accountName] Payment deadline exceeded for txId: $transactionId, payment: $paymentId. Attempt $i")
                 scope.launch {
                     paymentESService.update(paymentId) {
@@ -96,9 +95,9 @@ class PaymentExternalSystemAdapter(
                 return
             }
 
-            if (requestDelay > Duration.ZERO) {
-                logger.warn("[$accountName] RETRY attempt $i after ${requestDelay}ms delay")
-                delay(requestDelay)
+            if (retryDelay > Duration.ZERO) {
+                logger.warn("[$accountName] RETRY attempt $i after ${retryDelay}ms delay")
+                delay(retryDelay)
             }
 
             try {
@@ -138,7 +137,7 @@ class PaymentExternalSystemAdapter(
             }
         }
 
-        logger.error("[$accountName] All retry attempts exhausted for txId: $transactionId, payment: $paymentId")
+        logger.error("[${accountName}] All retry attempts exhausted for txId: $transactionId, payment: $paymentId")
         scope.launch {
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now().toEpochMilli(), transactionId, reason = "All retry attempts failed")
@@ -153,9 +152,7 @@ class PaymentExternalSystemAdapter(
     }
 
     fun rateLimitPerSec() = properties.rateLimitPerSec
-
     fun parallelRequests() = properties.parallelRequests
-
     fun averageProcessingTime() = properties.averageProcessingTime
 }
 

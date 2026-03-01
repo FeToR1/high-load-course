@@ -35,7 +35,7 @@ class OrderPayer(
         THREAD_POOL_SIZE,
         0,
         TimeUnit.SECONDS,
-        LinkedBlockingQueue(100),
+        LinkedBlockingQueue(4000),
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
@@ -56,7 +56,7 @@ class OrderPayer(
         val createdAt = System.currentTimeMillis()
 
         if (paymentExecutor.queue.remainingCapacity() == 0) {
-            throw RateLimitExceededException(processTime * 100)
+            throw RateLimitExceededException(300)
         }
 
         scope.launch {
