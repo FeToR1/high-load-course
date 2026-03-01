@@ -1,6 +1,7 @@
 package ru.quipy.common.utils
 
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 class OngoingWindow(
     maxWinSize: Int

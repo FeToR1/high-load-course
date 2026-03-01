@@ -76,7 +76,7 @@ class APIController(
 
         if (!bucket!!.tick()) {
             val processTime = account.averageProcessingTime().toMillis()
-            throw RateLimitExceededException(processTime * 5) // стоит завязаться на ведро
+            throw RateLimitExceededException(30) // стоит завязаться на ведро
         }
 
         val paymentId = UUID.randomUUID()

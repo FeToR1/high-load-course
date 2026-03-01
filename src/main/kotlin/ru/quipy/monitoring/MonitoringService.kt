@@ -50,7 +50,7 @@ class MonitoringService {
 
         private val ACCOUNT_TIMEOUTS = mapOf(
             "acc-7" to 1070L,
-            "acc-13" to 100L,
+            "acc-13" to 1000L,
         )
     }
 }
