@@ -28,7 +28,7 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
         logger.info("Leaking bucket size: $bucketSize")
 
         return LeakingBucketRateLimiter(
-            account.rateLimitPerSec().toLong(),
+            account.rateLimitPerSec().toLong(), // а тут точно rps должен быть, а не меньшее из rps и parallel?
             Duration.ofSeconds(1),
             bucketSize
         )
