@@ -16,7 +16,6 @@ import ru.quipy.payments.api.PaymentAggregate
 import java.time.Instant
 import java.util.*
 import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.PriorityBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
@@ -36,32 +35,13 @@ class OrderPayer(
         THREAD_POOL_SIZE,
         0,
         TimeUnit.SECONDS,
-        LinkedBlockingQueue(),
+        LinkedBlockingQueue(4000),
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
 
     private val scope = CoroutineScope(paymentExecutor.asCoroutineDispatcher())
 
-    private val paymentQueue = PriorityBlockingQueue<PaymentTask>()
-    private val maxQueueCapacity = 4000
-
-    init {
-        repeat(THREAD_POOL_SIZE) {
-            scope.launch {
-                while (isActive) {
-                    try {
-                        val task = runInterruptible { paymentQueue.take() }
-                        processTask(task)
-                    } catch (_: CancellationException) {
-                        break
-                    } catch (e: Exception) {
-                        logger.error("Error processing payment task", e)
-                    }
-                }
-            }
-        }
-    }
     @PostConstruct
     fun registerPoolSizeMetrics() {
         Gauge.builder("payment_executor_active_threads", paymentExecutor::getActiveCount)
@@ -72,30 +52,27 @@ class OrderPayer(
             .register(Metrics.globalRegistry)
     }
 
-    private suspend fun processTask(task: PaymentTask) {
-        val createdEvent = withContext(esDispatcher) {
-            paymentESService.create {
-                it.create(
-                    task.paymentId,
-                    task.orderId,
-                    task.amount
-                )
-            }
-        }
-        logger.trace("Payment ${createdEvent.paymentId} for order ${task.orderId} created.")
-
-        paymentService.submitPaymentRequest(task.paymentId, task.amount, task.createdAt, task.deadline)
-    }
-
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Instant): Long {
         val createdAt = System.currentTimeMillis()
 
-        // PriorityBlockingQueue is unbounded, so we manually enforce the capacity limit
-        if (paymentQueue.size >= maxQueueCapacity) {
-            throw RateLimitExceededException(processTime * 100)
+        if (paymentExecutor.queue.remainingCapacity() == 0) {
+            throw RateLimitExceededException(processTime * 100) // стоит рассмотреть зависимость времени от deadline
         }
 
-        paymentQueue.put(PaymentTask(orderId, amount, paymentId, createdAt, deadline))
+        scope.launch {
+            val createdEvent = withContext(esDispatcher) {
+                paymentESService.create {
+                    it.create(
+                        paymentId,
+                        orderId,
+                        amount
+                    )
+                }
+            }
+            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+
+            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+        }
 
         return createdAt
     }
@@ -103,17 +80,5 @@ class OrderPayer(
     companion object {
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
         const val THREAD_POOL_SIZE = 64
-    }
-}
-
-data class PaymentTask(
-    val orderId: UUID,
-    val amount: Int,
-    val paymentId: UUID,
-    val createdAt: Long,
-    val deadline: Instant
-) : Comparable<PaymentTask> {
-    override fun compareTo(other: PaymentTask): Int {
-        return this.deadline.compareTo(other.deadline)
     }
 }
