@@ -36,7 +36,7 @@ class OrderPayer(
         THREAD_POOL_SIZE,
         0,
         TimeUnit.SECONDS,
-        LinkedBlockingQueue(4000),
+        LinkedBlockingQueue(8000),
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
@@ -60,8 +60,8 @@ class OrderPayer(
             throw RateLimitExceededException(30) // стоит рассмотреть зависимость времени от deadline
         }
 
-        scope.launch {
-            val createdEvent = withContext(esDispatcher) {
+        paymentExecutor.submit {
+            val createdEvent =
                 paymentESService.create {
                     it.create(
                         paymentId,
@@ -69,7 +69,7 @@ class OrderPayer(
                         amount
                     )
                 }
-            }
+
             logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)

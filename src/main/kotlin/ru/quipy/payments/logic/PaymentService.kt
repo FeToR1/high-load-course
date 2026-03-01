@@ -10,7 +10,7 @@ class PaymentService(
     private val accountProvider: Supplier<PaymentExternalSystemAdapter>
 ) {
 
-    suspend fun submitPaymentRequest(
+    fun submitPaymentRequest(
         paymentId: UUID,
         amount: Int,
         paymentStartedAt: Long,
