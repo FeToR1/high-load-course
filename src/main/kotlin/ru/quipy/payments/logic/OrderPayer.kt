@@ -46,7 +46,7 @@ class OrderPayer(
     private val paymentQueue = PriorityBlockingQueue<PaymentTask>()
     private val maxQueueCapacity = 4000
 
-    fun init() {
+    init {
         repeat(THREAD_POOL_SIZE) {
             scope.launch {
                 while (isActive) {
