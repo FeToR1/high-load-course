@@ -18,17 +18,18 @@ import java.util.*
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.function.Supplier
 
 @Service
 class OrderPayer(
-    paymentAccounts: List<PaymentExternalSystemAdapter>,
+    accountProvider: Supplier<PaymentExternalSystemAdapter>,
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentService: PaymentService,
     @Qualifier("eventSourcingDispatcher")
     private val esDispatcher: ExecutorCoroutineDispatcher
 ) {
 
-    private val processTime = paymentAccounts[0].averageProcessingTime().toMillis()
+    private val processTime = accountProvider.get().averageProcessingTime().toMillis()
 
     private val paymentExecutor = ThreadPoolExecutor(
         THREAD_POOL_SIZE,

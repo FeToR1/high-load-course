@@ -33,7 +33,7 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
         )
 
         return LeakingBucketRateLimiter(
-            effectiveRps.toLong(), // а тут точно rps должен быть, а не меньшее из rps и parallel?
+            effectiveRps.toLong(),
             Duration.ofSeconds(1),
             bucketSize
         )
