@@ -10,7 +10,6 @@ import kotlinx.coroutines.time.delay
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.OngoingWindow
-import ru.quipy.common.utils.RateLimitExceededException
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.monitoring.MonitoringService
@@ -139,9 +138,6 @@ class PaymentExternalSystemAdapter(
                     logger.error(
                         "[$accountName] Payment request timed out for txId: $transactionId, payment: $paymentId, attempt $i",
                         e
-                    )
-                    throw RateLimitExceededException(
-                        monitoringService.get90thPercentileTimeout(properties.accountName).toMillis()
                     )
                 } catch (e: HttpConnectTimeoutException) {
                     logger.error(
