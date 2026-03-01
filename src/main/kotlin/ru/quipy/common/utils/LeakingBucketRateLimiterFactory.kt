@@ -33,7 +33,7 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
         )
 
         return LeakingBucketRateLimiter(
-            effectiveRps.toLong(), // а тут точно rps должен быть, а не меньшее из rps и parallel?
+            effectiveRps.toLong(),
             Duration.ofSeconds(1),
             bucketSize
         )
@@ -46,13 +46,13 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
     private fun calculateBucketSize(
         account: PaymentExternalSystemAdapter,
         ttl: Duration,
-        totalProcessingTime: Duration
+        processingTime: Duration
     ): Int {
-        val processingWaitLimit = ttl.minus(totalProcessingTime)
+        val processingWaitLimit = ttl.minus(processingTime)
 
         val effectiveRps = min(
             account.rateLimitPerSec().toDouble(),
-            account.parallelRequests().toDouble() / totalProcessingTime.toMillis() * 1000
+            account.parallelRequests().toDouble() / processingTime.toMillis() * 1000
         )
 
         logger.info("Effective RPS: $effectiveRps")
