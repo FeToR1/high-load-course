@@ -83,6 +83,7 @@ class PaymentExternalSystemAdapter(
             if (i > 1) {
                 monitoringService.increaseRetryCounter()
             }
+
             if (now().plus(retryDelay) > deadline) {
                 logger.error("[$accountName] Payment deadline exceeded for txId: $transactionId, payment: $paymentId. Attempt $i. Deadline $deadline, Now ${now()}")
                 scope.launch {
@@ -103,54 +104,51 @@ class PaymentExternalSystemAdapter(
                 rateLimiter.tickAsync()
                 ongoingWindow.acquireAsync()
                 val startTime = now()
-                try {
-                    val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
-                    val duration = Duration.between(startTime, now()).toMillis()
+                val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
+                val duration = Duration.between(startTime, now()).toMillis()
 
-                    val body = try {
-                        mapper.readValue(response.body(), ExternalSysResponse::class.java)
-                    } catch (e: Exception) {
-                        logger.error("[$accountName] Failed to parse response for txId: $transactionId, payment: $paymentId, result code: ︠{response.statusCode()}, reason: ︠{response.body()}")
-                        ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
-                    }
-
-                    monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
-                    monitoringService.recordRequestDuration(duration, body.result)
-
-                    if (response.statusCode() in 200..299) {
-                        scope.launch {
-                            paymentESService.update(paymentId) {
-                                it.logProcessing(
-                                    body.result,
-                                    now().toEpochMilli(),
-                                    transactionId,
-                                    reason = body.message
-                                )
-                            }
-                        }
-                        val requestType = if (body.result) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
-                        monitoringService.increaseRequestsCounter(requestType)
-                        return
-                    }
-
-                    logger.warn("[$accountName] Non-success status ︠{response.statusCode()} for txId: $transactionId, attempt $i")
-                } catch (e: HttpTimeoutException) {
-                    logger.error(
-                        "[$accountName] Payment request timed out for txId: $transactionId, payment: $paymentId, attempt $i",
-                        e
-                    )
-                } catch (e: HttpConnectTimeoutException) {
-                    logger.error(
-                        "[$accountName] Connection timed out for txId: $transactionId, payment: $paymentId, attempt $i",
-                        e
-                    )
+                val body = try {
+                    mapper.readValue(response.body(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
-                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+                    logger.error("[$accountName] Failed to parse response for txId: $transactionId, payment: $paymentId, result code: ︠{response.statusCode()}, reason: ︠{response.body()}")
+                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
+
+                monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
+                monitoringService.recordRequestDuration(duration, body.result)
+
+                if (response.statusCode() in 200..299) {
+                    scope.launch {
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(
+                                body.result,
+                                now().toEpochMilli(),
+                                transactionId,
+                                reason = body.message
+                            )
+                        }
+                    }
+                    val requestType = if (body.result) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
+                    monitoringService.increaseRequestsCounter(requestType)
+                    return
+                }
+
+                logger.warn("[$accountName] Non-success status ${response.statusCode()} for txId: $transactionId, attempt $i")
+            } catch (e: HttpTimeoutException) {
+                logger.error(
+                    "[$accountName] Payment request timed out for txId: $transactionId, payment: $paymentId, attempt $i",
+                    e
+                )
+            } catch (e: HttpConnectTimeoutException) {
+                logger.error(
+                    "[$accountName] Connection timed out for txId: $transactionId, payment: $paymentId, attempt $i",
+                    e
+                )
+            } catch (e: Exception) {
+                logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
             } finally {
                 ongoingWindow.release()
             }
-
         }
 
         logger.error("[${accountName}] All retry attempts exhausted for txId: $transactionId, payment: $paymentId")
