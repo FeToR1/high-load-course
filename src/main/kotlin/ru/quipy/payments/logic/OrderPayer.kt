@@ -57,7 +57,7 @@ class OrderPayer(
         val createdAt = System.currentTimeMillis()
 
         if (paymentExecutor.queue.remainingCapacity() == 0) {
-            throw RateLimitExceededException(processTime * 100) // стоит рассмотреть зависимость времени от deadline
+            throw RateLimitExceededException(30) // стоит рассмотреть зависимость времени от deadline
         }
 
         scope.launch {
