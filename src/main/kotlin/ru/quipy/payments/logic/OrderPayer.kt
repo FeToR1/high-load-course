@@ -15,7 +15,7 @@ import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.time.Instant
 import java.util.*
-import java.util.concurrent.PriorityBlockingQueue
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
@@ -35,7 +35,7 @@ class OrderPayer(
         THREAD_POOL_SIZE,
         0,
         TimeUnit.SECONDS,
-        PriorityBlockingQueue(4000),
+        LinkedBlockingQueue(4000),
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
@@ -55,7 +55,7 @@ class OrderPayer(
     fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Instant): Long {
         val createdAt = System.currentTimeMillis()
 
-        if (paymentExecutor.queue.size >= 4000) {
+        if (paymentExecutor.queue.remainingCapacity() == 0) {
             throw RateLimitExceededException(processTime * 100) // стоит рассмотреть зависимость времени от deadline
         }
 
