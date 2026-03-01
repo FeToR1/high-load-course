@@ -27,8 +27,13 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
 
         logger.info("Leaking bucket size: $bucketSize")
 
+        val effectiveRps = min(
+            account.rateLimitPerSec().toDouble(),
+            account.parallelRequests().toDouble() / processingTime.toMillis() * 1000
+        )
+
         return LeakingBucketRateLimiter(
-            account.rateLimitPerSec().toLong(), // а тут точно rps должен быть, а не меньшее из rps и parallel?
+            effectiveRps.toLong(), // а тут точно rps должен быть, а не меньшее из rps и parallel?
             Duration.ofSeconds(1),
             bucketSize
         )
