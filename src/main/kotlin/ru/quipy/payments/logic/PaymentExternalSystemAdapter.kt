@@ -48,7 +48,7 @@ class PaymentExternalSystemAdapter(
     private val client: HttpClient by lazy {
         HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_2)
-            .connectTimeout(Duration.ofMillis(100))
+//            .connectTimeout(Duration.ofMillis(100))
             .build()
     }
 
@@ -63,7 +63,7 @@ class PaymentExternalSystemAdapter(
         val request = HttpRequest.newBuilder()
             .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=${properties.serviceName}&token=$token&accountName=${properties.accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
             .POST(HttpRequest.BodyPublishers.noBody())
-            .timeout(monitoringService.get90thPercentileTimeout(properties.accountName))
+//            .timeout(monitoringService.get90thPercentileTimeout(properties.accountName))
             .build()
 
         sendRequest(request, paymentId, transactionId, deadline)
