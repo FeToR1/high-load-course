@@ -26,13 +26,12 @@ class LeakingBucketRateLimiter(
 
     init {
         rateLimiterScope.launch {
+            val delayBetweenRequests = window.toMillis().toDouble() / rate
             while (true) {
-                delay(window.toMillis())
-                repeat(rate.toInt()) {
-                    if (queue.poll() != null) {
-                        requestsProcessed.incrementAndGet()
-                    }
+                if (queue.poll() != null) {
+                    requestsProcessed.incrementAndGet()
                 }
+                delay(delayBetweenRequests.toLong())
             }
         }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
 
