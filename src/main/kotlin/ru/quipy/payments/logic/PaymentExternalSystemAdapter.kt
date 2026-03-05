@@ -97,7 +97,6 @@ class PaymentExternalSystemAdapter(
             }
 
             if (now().plus(retryDelay) > deadline) {
-                logger.error("[$accountName] Payment deadline exceeded for txId: $transactionId, payment: $paymentId. Attempt $attempt (retry $retryNumber). Deadline $deadline, Now ${now()}")
                 scope.launch {
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now().toEpochMilli(), transactionId, reason = "Deadline exceeded")
@@ -108,7 +107,6 @@ class PaymentExternalSystemAdapter(
             }
 
             if (retryDelay > Duration.ZERO) {
-                logger.warn("[$accountName] RETRY #$retryNumber (attempt $attempt) after ${retryDelay.toMillis()}ms delay")
                 delay(retryDelay)
             }
 
@@ -119,7 +117,6 @@ class PaymentExternalSystemAdapter(
             }
         }
 
-        logger.error("[${accountName}] All retry attempts exhausted for txId: $transactionId, payment: $paymentId")
         scope.launch {
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now().toEpochMilli(), transactionId, reason = "All retry attempts failed")
@@ -144,7 +141,6 @@ class PaymentExternalSystemAdapter(
             val body = try {
                 mapper.readValue(response.body(), ExternalSysResponse::class.java)
             } catch (e: Exception) {
-                logger.error("[$accountName] Failed to parse response for txId: $transactionId, payment: $paymentId, result code: ︠{response.statusCode()}, reason: ︠{response.body()}")
                 ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
             }
 
@@ -167,20 +163,12 @@ class PaymentExternalSystemAdapter(
                 monitoringService.increaseRequestsCounter(requestType)
                 return
             }
-
-            logger.warn("[$accountName] Non-success status ${response.statusCode()} for txId: $transactionId, attempt $i")
         } catch (e: HttpTimeoutException) {
-            logger.error(
-                "[$accountName] Payment request timed out for txId: $transactionId, payment: $paymentId, attempt $i",
-                e
-            )
+            // Timeout handled silently
         } catch (e: HttpConnectTimeoutException) {
-            logger.error(
-                "[$accountName] Connection timed out for txId: $transactionId, payment: $paymentId, attempt $i",
-                e
-            )
+            // Connection timeout handled silently
         } catch (e: Exception) {
-            logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+            // Exception handled silently
         }
     }
 

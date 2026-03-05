@@ -9,6 +9,8 @@ import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 class LeakingBucketRateLimiter(
     private val rate: Long,
@@ -16,10 +18,14 @@ class LeakingBucketRateLimiter(
     bucketSize: Int,
 ) : RateLimiter {
     private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
+    private val monitoringScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
 
     private val queue = LinkedBlockingQueue<Int>(bucketSize)
+    private val isFirstRequest = AtomicBoolean(true)
+    private val requestsProcessed = AtomicLong(0)
 
     init {
+        // Поток для выпуска запросов из ведра
         rateLimiterScope.launch {
             while (true) {
                 delay(window.toMillis())
@@ -28,10 +34,28 @@ class LeakingBucketRateLimiter(
                 }
             }
         }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
+
+        // Поток для мониторинга RPS выхода из ведра каждые 5 секунд
+        monitoringScope.launch {
+            while (true) {
+                delay(5000)
+                val processed = requestsProcessed.getAndSet(0)
+                val rps = processed / 5.0
+                logger.info("Bucket outgoing RPS: $rps req/sec (${processed} requests in 5 seconds)")
+            }
+        }
     }
 
     override fun tick(): Boolean {
-        return queue.offer(1)
+        if (isFirstRequest.compareAndSet(true, false)) {
+            logger.info("First request received in LeakingBucketRateLimiter")
+        }
+        
+        val accepted = queue.offer(1)
+        if (accepted) {
+            requestsProcessed.incrementAndGet()
+        }
+        return accepted
     }
 
     companion object {
