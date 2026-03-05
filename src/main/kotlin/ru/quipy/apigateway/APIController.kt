@@ -1,6 +1,8 @@
 package ru.quipy.apigateway
 
 import org.slf4j.LoggerFactory
+import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 import ru.quipy.common.utils.RateLimitExceededException
 import ru.quipy.common.utils.RateLimiter
@@ -67,7 +69,7 @@ class APIController(
     fun payOrder(
         @PathVariable orderId: UUID,
         @RequestParam("deadline") deadlineTimestampMs: Long
-    ): PaymentSubmissionDto {
+    ): ResponseEntity<PaymentSubmissionDto> {
         monitoringService.increaseRequestsCounter(RequestType.INCOMING)
 
         val deadline = Instant.ofEpochMilli(deadlineTimestampMs)
@@ -85,8 +87,15 @@ class APIController(
             it
         } ?: throw IllegalArgumentException("No such order $orderId")
 
-        val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
-        return PaymentSubmissionDto(createdAt, paymentId)
+        try {
+            val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
+            return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
+        } catch(_: Exception) {
+            logger.warn("Payment request rejected for order $orderId")
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", "1")
+                .build()
+        }
     }
 
     private fun initBucketOnce(deadline: Instant) {

@@ -5,7 +5,6 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.github.resilience4j.kotlin.ratelimiter.executeSuspendFunction
 import io.github.resilience4j.ratelimiter.RateLimiter
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.future.await
@@ -37,10 +36,9 @@ class PaymentExternalSystemAdapter(
     private val monitoringService: MonitoringService,
     private val ongoingWindow: Semaphore,
     private val rateLimiter: RateLimiter,
-    esDispatcher: ExecutorCoroutineDispatcher
+    private val dbScope: CoroutineScope
 ) {
 
-    private val scope = CoroutineScope(esDispatcher)
     private val dispatcherPayment = Executors.newFixedThreadPool(60).asCoroutineDispatcher()
 
     companion object {
@@ -49,18 +47,20 @@ class PaymentExternalSystemAdapter(
         val mapper = ObjectMapper().registerKotlinModule()
 
         const val RETRY_DELAY_BASE = 2.0
-        const val RETRY_DELAY_COEFF = 25
-        const val MAX_RETRIES = 3
+        const val RETRY_DELAY_COEFF = 50
+        const val MAX_DELAY_MS = 10000000L
+        const val MAX_RETRIES = 2
+        const val MAX_ATTEMPTS = MAX_RETRIES + 1
     }
 
     private val client: HttpClient by lazy {
         HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_2)
-            .connectTimeout(Duration.ofMillis(100))
+            .connectTimeout(Duration.ofMillis(200))
             .build()
     }
 
-    fun performPayment(
+    suspend fun performPayment(
         paymentId: UUID,
         amount: Int,
         paymentStartedAt: Long,
@@ -74,9 +74,7 @@ class PaymentExternalSystemAdapter(
             .timeout(monitoringService.get90thPercentileTimeout(properties.accountName))
             .build()
 
-        CoroutineScope(dispatcherPayment + SupervisorJob()).launch {
-            sendRequest(request, paymentId, transactionId, deadline)
-        }
+        sendRequest(request, paymentId, transactionId, deadline)
     }
 
     suspend fun sendRequest(
@@ -86,44 +84,59 @@ class PaymentExternalSystemAdapter(
         deadline: Instant
     ) {
         val accountName = properties.accountName
+        var lastResult: PaymentResult? = null
 
-        for (i in 1..MAX_RETRIES) {
-            val retryDelay = calculateDelay(i)
+        for (attempt in 1..MAX_ATTEMPTS) {
+            val retryNumber = attempt - 1
+            val retryDelay = calculateDelay(retryNumber)
 
-            if (i > 1) {
+            if (retryNumber > 0) {
                 monitoringService.increaseRetryCounter()
             }
 
             if (now().plus(retryDelay) > deadline) {
-                logger.error("[$accountName] Payment deadline exceeded for txId: $transactionId, payment: $paymentId. Attempt $i. Deadline $deadline, Now ${now()}")
-                scope.launch {
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now().toEpochMilli(), transactionId, reason = "Deadline exceeded")
-                    }
-                }
+                logPaymentResult(paymentId, transactionId, false, "Deadline exceeded")
                 monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
                 return
             }
 
             if (retryDelay > Duration.ZERO) {
-                logger.warn("[$accountName] RETRY attempt $i after ${retryDelay}ms delay")
                 delay(retryDelay)
             }
 
-            ongoingWindow.withPermit {
+            val result = ongoingWindow.withPermit {
                 rateLimiter.executeSuspendFunction {
-                    sendRequestReal(request, paymentId, transactionId, i)
+                    sendRequestReal(request, paymentId, transactionId, attempt)
                 }
+            }
+
+            lastResult = result
+            
+            if (result.success) {
+                logPaymentResult(paymentId, transactionId, result.paymentSucceeded, result.message)
+                val requestType = if (result.paymentSucceeded) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
+                monitoringService.increaseRequestsCounter(requestType)
+                return
             }
         }
 
-        logger.error("[${accountName}] All retry attempts exhausted for txId: $transactionId, payment: $paymentId")
-        scope.launch {
+        // All attempts failed
+        val reason = lastResult?.message ?: "All retry attempts failed"
+        logPaymentResult(paymentId, transactionId, false, reason)
+        monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
+    }
+
+    private fun logPaymentResult(
+        paymentId: UUID,
+        transactionId: UUID,
+        succeeded: Boolean,
+        reason: String?
+    ) {
+        dbScope.launch {
             paymentESService.update(paymentId) {
-                it.logProcessing(false, now().toEpochMilli(), transactionId, reason = "All retry attempts failed")
+                it.logProcessing(succeeded, now().toEpochMilli(), transactionId, reason = reason)
             }
         }
-        monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
     }
 
     private suspend fun sendRequestReal(
@@ -131,7 +144,7 @@ class PaymentExternalSystemAdapter(
         paymentId: UUID,
         transactionId: UUID,
         i: Int
-    ) {
+    ): PaymentResult {
         val accountName = properties.accountName
 
         try {
@@ -142,7 +155,6 @@ class PaymentExternalSystemAdapter(
             val body = try {
                 mapper.readValue(response.body(), ExternalSysResponse::class.java)
             } catch (e: Exception) {
-                logger.error("[$accountName] Failed to parse response for txId: $transactionId, payment: $paymentId, result code: ︠{response.statusCode()}, reason: ︠{response.body()}")
                 ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
             }
 
@@ -150,40 +162,26 @@ class PaymentExternalSystemAdapter(
             monitoringService.recordRequestDuration(duration, body.result)
 
             if (response.statusCode() in 200..299) {
-                scope.launch {
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(
-                            body.result,
-                            now().toEpochMilli(),
-                            transactionId,
-                            reason = body.message
-                        )
-                    }
-                }
-                val requestType =
-                    if (body.result) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
-                monitoringService.increaseRequestsCounter(requestType)
-                return
+                logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+                return PaymentResult(success = true, paymentSucceeded = body.result, message = body.message)
             }
-
-            logger.warn("[$accountName] Non-success status ${response.statusCode()} for txId: $transactionId, attempt $i")
+            
+            return PaymentResult(success = false, paymentSucceeded = false, message = "HTTP ${response.statusCode()}")
         } catch (e: HttpTimeoutException) {
-            logger.error(
-                "[$accountName] Payment request timed out for txId: $transactionId, payment: $paymentId, attempt $i",
-                e
-            )
+            return PaymentResult(success = false, paymentSucceeded = false, message = "Request timeout")
         } catch (e: HttpConnectTimeoutException) {
-            logger.error(
-                "[$accountName] Connection timed out for txId: $transactionId, payment: $paymentId, attempt $i",
-                e
-            )
+            return PaymentResult(success = false, paymentSucceeded = false, message = "Connection timeout")
         } catch (e: Exception) {
-            logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+            return PaymentResult(success = false, paymentSucceeded = false, message = e.message ?: "Unknown error")
         }
     }
 
-    private fun calculateDelay(i: Int): Duration {
-        val durationMs = if (i == 1) 0L else (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(i - 1)).toLong()
+    private fun calculateDelay(retryNumber: Int): Duration {
+        val durationMs = if (retryNumber == 0) {
+            0L
+        } else {
+            minOf((RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(retryNumber - 1)).toLong(), MAX_DELAY_MS)
+        }
         return Duration.ofMillis(durationMs)
     }
 
@@ -191,5 +189,11 @@ class PaymentExternalSystemAdapter(
     fun parallelRequests() = properties.parallelRequests
     fun averageProcessingTime() = properties.averageProcessingTime
 }
+
+data class PaymentResult(
+    val success: Boolean,           // true if request completed successfully (got 2xx response)
+    val paymentSucceeded: Boolean,  // true if payment was actually successful
+    val message: String?            // reason/message from external system or error
+)
 
 fun now(): Instant = Instant.now()

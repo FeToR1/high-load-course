@@ -4,6 +4,7 @@
     <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
 
     <logger name="ru.quipy" level="INFO"/>
+    <logger name="ru.quipy.core.EventSourcingService" level="ERROR"/>
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>

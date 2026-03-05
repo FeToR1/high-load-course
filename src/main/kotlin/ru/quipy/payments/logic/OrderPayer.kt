@@ -6,7 +6,6 @@ import jakarta.annotation.PostConstruct
 import kotlinx.coroutines.*
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
 import ru.quipy.common.utils.NamedThreadFactory
@@ -25,8 +24,7 @@ class OrderPayer(
     accountProvider: Supplier<PaymentExternalSystemAdapter>,
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentService: PaymentService,
-    @Qualifier("eventSourcingDispatcher")
-    private val esDispatcher: ExecutorCoroutineDispatcher
+    private val dbScope: CoroutineScope
 ) {
 
     private val processTime = accountProvider.get().averageProcessingTime().toMillis()
@@ -36,12 +34,12 @@ class OrderPayer(
         THREAD_POOL_SIZE,
         0,
         TimeUnit.SECONDS,
-        LinkedBlockingQueue(8000),
+        LinkedBlockingQueue(10_000),
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
 
-    private val scope = CoroutineScope(paymentExecutor.asCoroutineDispatcher())
+    val executorScope = CoroutineScope(SupervisorJob() + paymentExecutor.asCoroutineDispatcher())
 
     @PostConstruct
     fun registerPoolSizeMetrics() {
@@ -60,8 +58,9 @@ class OrderPayer(
             throw RateLimitExceededException(30) // стоит рассмотреть зависимость времени от deadline
         }
 
-        paymentExecutor.submit {
-            val createdEvent =
+        executorScope.launch {
+            
+            dbScope.launch {
                 paymentESService.create {
                     it.create(
                         paymentId,
@@ -69,8 +68,7 @@ class OrderPayer(
                         amount
                     )
                 }
-
-            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+            }
 
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         }
