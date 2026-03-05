@@ -26,22 +26,12 @@ class LeakingBucketRateLimiter(
 
     init {
         rateLimiterScope.launch {
-            val delayBetweenRequestsMs = window.toMillis().toDouble() / rate
-            var accumulatedDelay = 0.0
-            
+            val delayBetweenRequests = window.toMillis().toDouble() / rate
             while (true) {
                 if (queue.poll() != null) {
                     requestsProcessed.incrementAndGet()
                 }
-                
-                // Накапливаем дробную часть задержки для точности
-                accumulatedDelay += delayBetweenRequestsMs
-                val delayToApply = accumulatedDelay.toLong()
-                
-                if (delayToApply > 0) {
-                    delay(delayToApply)
-                    accumulatedDelay -= delayToApply
-                }
+                delay(delayBetweenRequests.toLong())
             }
         }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
 
