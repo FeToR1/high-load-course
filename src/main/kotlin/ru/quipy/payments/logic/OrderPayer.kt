@@ -60,18 +60,18 @@ class OrderPayer(
             throw RateLimitExceededException(30) // стоит рассмотреть зависимость времени от deadline
         }
 
+        val createdEvent =
+            paymentESService.create {
+                it.create(
+                    paymentId,
+                    orderId,
+                    amount
+                )
+            }
+
+        logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+
         paymentExecutor.submit {
-            val createdEvent =
-                paymentESService.create {
-                    it.create(
-                        paymentId,
-                        orderId,
-                        amount
-                    )
-                }
-
-            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
-
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         }
 
