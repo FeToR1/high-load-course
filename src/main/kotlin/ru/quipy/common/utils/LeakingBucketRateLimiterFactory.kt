@@ -16,7 +16,7 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
         deadline: Instant
     ): LeakingBucketRateLimiter {
         val processingTime = calculateTotalProcessingTime(account)
-        val ttl = Duration.between(Instant.now(), deadline)
+        val ttl = 1000
 
         val bucketSize = if (ttl < processingTime) {
             DEFAULT_BUCKET_SIZE
