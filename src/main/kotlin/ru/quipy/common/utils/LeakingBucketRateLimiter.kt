@@ -25,12 +25,13 @@ class LeakingBucketRateLimiter(
     private val requestsProcessed = AtomicLong(0)
 
     init {
-        // Поток для выпуска запросов из ведра
         rateLimiterScope.launch {
             while (true) {
                 delay(window.toMillis())
                 repeat(rate.toInt()) {
-                    queue.poll()
+                    if (queue.poll() != null) {
+                        requestsProcessed.incrementAndGet()
+                    }
                 }
             }
         }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
@@ -51,11 +52,7 @@ class LeakingBucketRateLimiter(
             logger.info("First request received in LeakingBucketRateLimiter")
         }
         
-        val accepted = queue.offer(1)
-        if (accepted) {
-            requestsProcessed.incrementAndGet()
-        }
-        return accepted
+        return queue.offer(1)
     }
 
     companion object {
