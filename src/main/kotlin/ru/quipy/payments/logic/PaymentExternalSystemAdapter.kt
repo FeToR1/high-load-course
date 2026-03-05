@@ -51,6 +51,7 @@ class PaymentExternalSystemAdapter(
         const val RETRY_DELAY_BASE = 2.0
         const val RETRY_DELAY_COEFF = 25
         const val MAX_RETRIES = 3
+        const val MAX_ATTEMPTS = MAX_RETRIES + 1
     }
 
     private val client: HttpClient by lazy {
@@ -87,15 +88,16 @@ class PaymentExternalSystemAdapter(
     ) {
         val accountName = properties.accountName
 
-        for (i in 1..MAX_RETRIES) {
-            val retryDelay = calculateDelay(i)
+        for (attempt in 1..MAX_ATTEMPTS) {
+            val retryNumber = attempt - 1
+            val retryDelay = calculateDelay(retryNumber)
 
-            if (i > 1) {
+            if (retryNumber > 0) {
                 monitoringService.increaseRetryCounter()
             }
 
             if (now().plus(retryDelay) > deadline) {
-                logger.error("[$accountName] Payment deadline exceeded for txId: $transactionId, payment: $paymentId. Attempt $i. Deadline $deadline, Now ${now()}")
+                logger.error("[$accountName] Payment deadline exceeded for txId: $transactionId, payment: $paymentId. Attempt $attempt (retry $retryNumber). Deadline $deadline, Now ${now()}")
                 scope.launch {
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now().toEpochMilli(), transactionId, reason = "Deadline exceeded")
@@ -106,13 +108,13 @@ class PaymentExternalSystemAdapter(
             }
 
             if (retryDelay > Duration.ZERO) {
-                logger.warn("[$accountName] RETRY attempt $i after ${retryDelay}ms delay")
+                logger.warn("[$accountName] RETRY #$retryNumber (attempt $attempt) after ${retryDelay.toMillis()}ms delay")
                 delay(retryDelay)
             }
 
             ongoingWindow.withPermit {
                 rateLimiter.executeSuspendFunction {
-                    sendRequestReal(request, paymentId, transactionId, i)
+                    sendRequestReal(request, paymentId, transactionId, attempt)
                 }
             }
         }
@@ -182,8 +184,8 @@ class PaymentExternalSystemAdapter(
         }
     }
 
-    private fun calculateDelay(i: Int): Duration {
-        val durationMs = if (i == 1) 0L else (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(i - 1)).toLong()
+    private fun calculateDelay(retryNumber: Int): Duration {
+        val durationMs = if (retryNumber == 0) 0L else (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(retryNumber)).toLong()
         return Duration.ofMillis(durationMs)
     }
 
