@@ -47,8 +47,9 @@ class PaymentExternalSystemAdapter(
         val mapper = ObjectMapper().registerKotlinModule()
 
         const val RETRY_DELAY_BASE = 2.0
-        const val RETRY_DELAY_COEFF = 25
-        const val MAX_RETRIES = 3
+        const val RETRY_DELAY_COEFF = 50
+        const val MAX_DELAY_MS = 10L
+        const val MAX_RETRIES = 2
         const val MAX_ATTEMPTS = MAX_RETRIES + 1
     }
 
@@ -169,7 +170,11 @@ class PaymentExternalSystemAdapter(
     }
 
     private fun calculateDelay(retryNumber: Int): Duration {
-        val durationMs = if (retryNumber == 0) 0L else (RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(retryNumber)).toLong()
+        val durationMs = if (retryNumber == 0) {
+            0L
+        } else {
+            minOf((RETRY_DELAY_COEFF * RETRY_DELAY_BASE.pow(retryNumber - 1)).toLong(), MAX_DELAY_MS)
+        }
         return Duration.ofMillis(durationMs)
     }
 
