@@ -5,8 +5,6 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.github.resilience4j.kotlin.ratelimiter.executeSuspendFunction
 import io.github.resilience4j.ratelimiter.RateLimiter
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.future.await
@@ -38,10 +36,9 @@ class PaymentExternalSystemAdapter(
     private val monitoringService: MonitoringService,
     private val ongoingWindow: Semaphore,
     private val rateLimiter: RateLimiter,
-    esDispatcher: ExecutorCoroutineDispatcher
+    private val dbScope: CoroutineScope
 ) {
 
-    private val dbScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + esDispatcher)
     private val dispatcherPayment = Executors.newFixedThreadPool(60).asCoroutineDispatcher()
 
     companion object {
@@ -62,7 +59,7 @@ class PaymentExternalSystemAdapter(
             .build()
     }
 
-    fun performPayment(
+    suspend fun performPayment(
         paymentId: UUID,
         amount: Int,
         paymentStartedAt: Long,
@@ -76,9 +73,7 @@ class PaymentExternalSystemAdapter(
             .timeout(monitoringService.get90thPercentileTimeout(properties.accountName))
             .build()
 
-        CoroutineScope(dispatcherPayment + SupervisorJob()).launch {
-            sendRequest(request, paymentId, transactionId, deadline)
-        }
+        sendRequest(request, paymentId, transactionId, deadline)
     }
 
     suspend fun sendRequest(

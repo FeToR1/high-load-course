@@ -5,7 +5,10 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.github.resilience4j.ratelimiter.RateLimiter
 import io.github.resilience4j.ratelimiter.RateLimiterConfig
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.sync.Semaphore
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.beans.factory.annotation.Value
@@ -42,11 +45,18 @@ class PaymentAccountsConfig {
     lateinit var allowedAccounts: List<String>
 
     @Bean
+    fun dbScope(
+        @Qualifier("eventSourcingDispatcher")
+        esDispatcher: ExecutorCoroutineDispatcher
+    ) = CoroutineScope(SupervisorJob() + Dispatchers.IO + esDispatcher)
+
+    @Bean
     fun accountAdapters(
         paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
         monitoringService: MonitoringService,
         @Qualifier("eventSourcingDispatcher")
-        esDispatcher: ExecutorCoroutineDispatcher
+        esDispatcher: ExecutorCoroutineDispatcher,
+        dbScope: CoroutineScope
     ): List<PaymentExternalSystemAdapter> {
         val request = HttpRequest.newBuilder()
             .uri(URI("http://${paymentProviderHostPort}/external/accounts?serviceName=$serviceName&token=$token"))
@@ -76,7 +86,7 @@ class PaymentAccountsConfig {
                         .limitRefreshPeriod(Duration.ofMillis(1000))
                         .build()
                     ),
-                    esDispatcher
+                    dbScope
                 )
             }
     }

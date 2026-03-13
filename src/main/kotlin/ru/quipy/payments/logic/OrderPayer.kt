@@ -25,8 +25,7 @@ class OrderPayer(
     accountProvider: Supplier<PaymentExternalSystemAdapter>,
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentService: PaymentService,
-    @Qualifier("eventSourcingDispatcher")
-    private val esDispatcher: ExecutorCoroutineDispatcher
+    private val dbScope: CoroutineScope
 ) {
 
     private val processTime = accountProvider.get().averageProcessingTime().toMillis()
