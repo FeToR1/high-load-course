@@ -84,6 +84,7 @@ class PaymentExternalSystemAdapter(
         deadline: Instant
     ) {
         val accountName = properties.accountName
+        var lastResult: PaymentResult? = null
 
         for (attempt in 1..MAX_ATTEMPTS) {
             val retryNumber = attempt - 1
@@ -94,11 +95,7 @@ class PaymentExternalSystemAdapter(
             }
 
             if (now().plus(retryDelay) > deadline) {
-                dbScope.launch {
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now().toEpochMilli(), transactionId, reason = "Deadline exceeded")
-                    }
-                }
+                logPaymentResult(paymentId, transactionId, false, "Deadline exceeded")
                 monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
                 return
             }
@@ -107,19 +104,39 @@ class PaymentExternalSystemAdapter(
                 delay(retryDelay)
             }
 
-            ongoingWindow.withPermit {
+            val result = ongoingWindow.withPermit {
                 rateLimiter.executeSuspendFunction {
                     sendRequestReal(request, paymentId, transactionId, attempt)
                 }
             }
-        }
 
-        dbScope.launch {
-            paymentESService.update(paymentId) {
-                it.logProcessing(false, now().toEpochMilli(), transactionId, reason = "All retry attempts failed")
+            lastResult = result
+            
+            if (result.success) {
+                logPaymentResult(paymentId, transactionId, result.paymentSucceeded, result.message)
+                val requestType = if (result.paymentSucceeded) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
+                monitoringService.increaseRequestsCounter(requestType)
+                return
             }
         }
+
+        // All attempts failed
+        val reason = lastResult?.message ?: "All retry attempts failed"
+        logPaymentResult(paymentId, transactionId, false, reason)
         monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
+    }
+
+    private fun logPaymentResult(
+        paymentId: UUID,
+        transactionId: UUID,
+        succeeded: Boolean,
+        reason: String?
+    ) {
+        dbScope.launch {
+            paymentESService.update(paymentId) {
+                it.logProcessing(succeeded, now().toEpochMilli(), transactionId, reason = reason)
+            }
+        }
     }
 
     private suspend fun sendRequestReal(
@@ -127,7 +144,7 @@ class PaymentExternalSystemAdapter(
         paymentId: UUID,
         transactionId: UUID,
         i: Int
-    ) {
+    ): PaymentResult {
         val accountName = properties.accountName
 
         try {
@@ -146,30 +163,16 @@ class PaymentExternalSystemAdapter(
 
             if (response.statusCode() in 200..299) {
                 logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-                dbScope.launch {
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(
-                            body.result,
-                            now().toEpochMilli(),
-                            transactionId,
-                            reason = body.message
-                        )
-                    }
-                }
-                val requestType =
-                    if (body.result) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
-                monitoringService.increaseRequestsCounter(requestType)
-                
-                if (body.result || body.message != "Temporary error") {
-                    return
-                }
+                return PaymentResult(success = true, paymentSucceeded = body.result, message = body.message)
             }
+            
+            return PaymentResult(success = false, paymentSucceeded = false, message = "HTTP ${response.statusCode()}")
         } catch (e: HttpTimeoutException) {
-            // Timeout handled silently
+            return PaymentResult(success = false, paymentSucceeded = false, message = "Request timeout")
         } catch (e: HttpConnectTimeoutException) {
-            // Connection timeout handled silently
+            return PaymentResult(success = false, paymentSucceeded = false, message = "Connection timeout")
         } catch (e: Exception) {
-            // Exception handled silently
+            return PaymentResult(success = false, paymentSucceeded = false, message = e.message ?: "Unknown error")
         }
     }
 
@@ -186,5 +189,11 @@ class PaymentExternalSystemAdapter(
     fun parallelRequests() = properties.parallelRequests
     fun averageProcessingTime() = properties.averageProcessingTime
 }
+
+data class PaymentResult(
+    val success: Boolean,           // true if request completed successfully (got 2xx response)
+    val paymentSucceeded: Boolean,  // true if payment was actually successful
+    val message: String?            // reason/message from external system or error
+)
 
 fun now(): Instant = Instant.now()
