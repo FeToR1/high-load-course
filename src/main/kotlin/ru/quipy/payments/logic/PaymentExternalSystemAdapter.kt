@@ -103,6 +103,18 @@ class PaymentExternalSystemAdapter(
                 return
             }
 
+            val remainingTime = Duration.between(now(), deadline).toMillis()
+            if (remainingTime <= 50) {
+                logger.error("[$accountName] Insufficient time remaining ($remainingTime ms) for payment $paymentId, txId: $transactionId")
+                dbScope.launch {
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(false, now().toEpochMilli(), transactionId, reason = "Insufficient time remaining")
+                    }
+                }
+                monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
+                return
+            }
+
             if (retryDelay > Duration.ZERO) {
                 delay(retryDelay)
             }
