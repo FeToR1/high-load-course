@@ -41,7 +41,7 @@ class OrderPayer(
         CallerBlockingRejectedExecutionHandler()
     )
 
-    private val scope = CoroutineScope(paymentExecutor.asCoroutineDispatcher())
+    val executorScope = CoroutineScope(SupervisorJob() + paymentExecutor.asCoroutineDispatcher())
 
     @PostConstruct
     fun registerPoolSizeMetrics() {
@@ -60,8 +60,9 @@ class OrderPayer(
             throw RateLimitExceededException(30) // стоит рассмотреть зависимость времени от deadline
         }
 
-        paymentExecutor.submit {
-            val createdEvent =
+        executorScope.launch {
+            
+            dbScope.launch {
                 paymentESService.create {
                     it.create(
                         paymentId,
@@ -69,8 +70,7 @@ class OrderPayer(
                         amount
                     )
                 }
-
-            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+            }
 
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         }

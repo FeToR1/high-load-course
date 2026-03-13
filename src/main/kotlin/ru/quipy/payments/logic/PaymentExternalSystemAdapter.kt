@@ -5,6 +5,7 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.github.resilience4j.kotlin.ratelimiter.executeSuspendFunction
 import io.github.resilience4j.ratelimiter.RateLimiter
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -40,7 +41,7 @@ class PaymentExternalSystemAdapter(
     esDispatcher: ExecutorCoroutineDispatcher
 ) {
 
-    private val scope = CoroutineScope(esDispatcher)
+    private val dbScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + esDispatcher)
     private val dispatcherPayment = Executors.newFixedThreadPool(60).asCoroutineDispatcher()
 
     companion object {
@@ -97,7 +98,7 @@ class PaymentExternalSystemAdapter(
             }
 
             if (now().plus(retryDelay) > deadline) {
-                scope.launch {
+                dbScope.launch {
                     paymentESService.update(paymentId) {
                         it.logProcessing(false, now().toEpochMilli(), transactionId, reason = "Deadline exceeded")
                     }
@@ -117,7 +118,7 @@ class PaymentExternalSystemAdapter(
             }
         }
 
-        scope.launch {
+        dbScope.launch {
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now().toEpochMilli(), transactionId, reason = "All retry attempts failed")
             }
@@ -148,7 +149,7 @@ class PaymentExternalSystemAdapter(
             monitoringService.recordRequestDuration(duration, body.result)
 
             if (response.statusCode() in 200..299) {
-                scope.launch {
+                dbScope.launch {
                     paymentESService.update(paymentId) {
                         it.logProcessing(
                             body.result,
