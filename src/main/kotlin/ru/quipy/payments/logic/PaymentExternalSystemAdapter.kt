@@ -145,6 +145,7 @@ class PaymentExternalSystemAdapter(
             monitoringService.recordRequestDuration(duration, body.result)
 
             if (response.statusCode() in 200..299) {
+                logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
                 dbScope.launch {
                     paymentESService.update(paymentId) {
                         it.logProcessing(
@@ -158,7 +159,10 @@ class PaymentExternalSystemAdapter(
                 val requestType =
                     if (body.result) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
                 monitoringService.increaseRequestsCounter(requestType)
-                return
+                
+                if (body.result || body.message != "Temporary error") {
+                    return
+                }
             }
         } catch (e: HttpTimeoutException) {
             // Timeout handled silently
