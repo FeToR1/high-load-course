@@ -35,13 +35,13 @@ class LeakingBucketRateLimiter(
             }
         }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
 
-        // Поток для мониторинга RPS выхода из ведра каждые 1 секунд
+        // Поток для мониторинга RPS выхода из ведра каждые 5 секунд
         monitoringScope.launch {
             while (true) {
-                delay(1000)
+                delay(5000)
                 val processed = requestsProcessed.getAndSet(0)
-                val rps = processed / 1.0
-                logger.info("Bucket outgoing RPS: $rps req/sec (${processed} requests in 1 seconds)")
+                val rps = processed / 5.0
+                logger.info("Bucket outgoing RPS: $rps req/sec (${processed} requests in 5 seconds)")
             }
         }
     }
