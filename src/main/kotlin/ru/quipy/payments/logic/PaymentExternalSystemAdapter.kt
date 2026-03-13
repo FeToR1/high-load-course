@@ -94,7 +94,7 @@ class PaymentExternalSystemAdapter(
                 monitoringService.increaseRetryCounter()
             }
 
-            if (now().plus(retryDelay) > deadline) {
+            if (now().plus(retryDelay) > deadline || Duration.between(now(), deadline).toMillis() < 50) {
                 logPaymentResult(paymentId, transactionId, false, "Deadline exceeded")
                 monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
                 return
