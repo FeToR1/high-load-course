@@ -69,7 +69,7 @@ class APIController(
     fun payOrder(
         @PathVariable orderId: UUID,
         @RequestParam("deadline") deadlineTimestampMs: Long
-    ): PaymentSubmissionDto {
+    ): ResponseEntity<PaymentSubmissionDto> {
         monitoringService.increaseRequestsCounter(RequestType.INCOMING)
 
         val deadline = Instant.ofEpochMilli(deadlineTimestampMs)
