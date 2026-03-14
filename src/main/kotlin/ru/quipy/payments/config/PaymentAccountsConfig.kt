@@ -15,8 +15,6 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import ru.quipy.common.utils.OngoingWindow
-import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.payments.api.PaymentAggregate
@@ -52,7 +50,7 @@ class PaymentAccountsConfig {
 
     @Bean
     fun accountAdapters(
-        paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
+        paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
         monitoringService: MonitoringService,
         @Qualifier("eventSourcingDispatcher")
         esDispatcher: ExecutorCoroutineDispatcher,
@@ -76,7 +74,7 @@ class PaymentAccountsConfig {
             .map {
                 PaymentExternalSystemAdapter(
                     it,
-                    paymentService,
+                    paymentESService,
                     paymentProviderHostPort,
                     token,
                     monitoringService,
