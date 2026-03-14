@@ -85,6 +85,7 @@ class PaymentExternalSystemAdapter(
             }
 
             if (now().plus(retryDelay) > deadline) {
+                logger.warn("deadline exceeded $deadline")
                 logPaymentResult(paymentId, transactionId, false, "Deadline exceeded")
                 monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
                 return
@@ -124,10 +125,6 @@ class PaymentExternalSystemAdapter(
         succeeded: Boolean,
         reason: String?
     ) {
-        if (reason != null) {
-            logger.warn("fail ${reason}")
-        }
-
         dbScope.launch {
             paymentESService.update(paymentId) {
                 it.logProcessing(succeeded, now().toEpochMilli(), transactionId, reason = reason)
