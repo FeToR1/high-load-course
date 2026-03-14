@@ -12,6 +12,7 @@ import ru.quipy.monitoring.RequestType
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import ru.quipy.payments.logic.PaymentExternalSystemAdapter
+import java.time.Duration
 import java.time.Instant
 import java.util.*
 
@@ -81,8 +82,9 @@ class APIController(
         initStartTimeOnce()
         initBucketOnce(deadline)
 
-        if (deadline < startTime) {
+        if (deadline < startTime?.plus(Duration.ofMillis(5000))) {
             logger.error("epic fucking stuff, deadline $deadline, start time $startTime")
+            throw RateLimitExceededException(30) // стоит завязаться на ведро
         }
 
         if (!bucket!!.tick()) {
