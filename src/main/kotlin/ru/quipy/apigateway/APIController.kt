@@ -30,7 +30,7 @@ class APIController(
     private val bucketLock = Any()
 
     @Volatile
-    private var startTime: Instant? = null
+    private var minRequestTime: Instant? = null
     private val startTimeLock = Any()
 
     @PostMapping("/users")
@@ -79,12 +79,12 @@ class APIController(
 
         val deadline = Instant.ofEpochMilli(deadlineTimestampMs)
 
-        initStartTimeOnce()
+        initMinRequestTimeOnce()
         initBucketOnce(deadline)
 
-        if (deadline < startTime?.plus(Duration.ofMillis(5000))) {
-            logger.error("epic fucking stuff, deadline $deadline, start time $startTime")
-            throw RateLimitExceededException(30) // стоит завязаться на ведро
+        if (deadline < minRequestTime) {
+            logger.error("epic fucking stuff, deadline $deadline, start time $minRequestTime")
+            throw RateLimitExceededException(1000) // стоит завязаться на ведро
         }
 
         if (!bucket!!.tick()) {
@@ -123,17 +123,17 @@ class APIController(
         }
     }
 
-    private fun initStartTimeOnce() {
-        if (startTime != null) {
+    private fun initMinRequestTimeOnce() {
+        if (minRequestTime != null) {
             return
         }
 
         synchronized(startTimeLock) {
-            if (startTime != null) {
+            if (minRequestTime != null) {
                 return
             }
 
-            startTime = Instant.now()
+            minRequestTime = Instant.now() + Duration.ofMillis(5000)
         }
     }
 
