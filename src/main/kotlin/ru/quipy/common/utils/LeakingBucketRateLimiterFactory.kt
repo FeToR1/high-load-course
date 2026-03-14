@@ -54,6 +54,6 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
     companion object {
         private const val DEFAULT_BUCKET_SIZE = 100
         private val logger = LoggerFactory.getLogger(LeakingBucketRateLimiterFactory::class.java)
-        private val APP_PROCESSING_TIME = Duration.ofMillis(10)
+        private val APP_PROCESSING_TIME = Duration.ofMillis(700)
     }
 }
