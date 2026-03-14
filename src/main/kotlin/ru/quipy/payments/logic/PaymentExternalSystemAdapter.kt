@@ -108,7 +108,7 @@ class PaymentExternalSystemAdapter(
                 monitoringService.increaseRequestsCounter(requestType)
                 return
             } else {
-                logger.warn(result.message)
+                logger.warn("fail: ${result.message}")
             }
         }
 
