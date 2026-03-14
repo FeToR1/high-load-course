@@ -81,7 +81,7 @@ class APIController(
 
         if (deadline < minRequestTime) {
             logger.error("epic fucking stuff, deadline $deadline, start time $minRequestTime")
-            throw RateLimitExceededException(12000) // стоит завязаться на ведро
+            throw RateLimitExceededException(17000) // стоит завязаться на ведро
         }
 
         initBucketOnce(deadline)
