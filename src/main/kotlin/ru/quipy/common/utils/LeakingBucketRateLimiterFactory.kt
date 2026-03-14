@@ -31,7 +31,7 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
         logger.info("Leaking bucket size: $bucketSize, Effective RPS: $effectiveRps")
 
         return LeakingBucketRateLimiter(
-            4500,
+            3950,
             Duration.ofSeconds(1),
             4500
         )
