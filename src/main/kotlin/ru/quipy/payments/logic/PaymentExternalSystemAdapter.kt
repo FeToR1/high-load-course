@@ -84,8 +84,10 @@ class PaymentExternalSystemAdapter(
                 monitoringService.increaseRetryCounter()
             }
 
-            if (now().plus(retryDelay) > deadline) {
-                logPaymentResult(paymentId, transactionId, false, "Deadline exceeded $deadline, retry number $retryNumber, retry delay $retryDelay")
+            val now = now().plus(retryDelay)
+
+            if (now > deadline) {
+                logPaymentResult(paymentId, transactionId, false, "Deadline exceeded $deadline, now $now, retry number $retryNumber, retry delay $retryDelay")
                 monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
                 return
             }
