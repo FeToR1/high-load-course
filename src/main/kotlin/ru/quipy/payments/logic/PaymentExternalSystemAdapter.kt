@@ -46,12 +46,11 @@ class PaymentExternalSystemAdapter(
         const val MAX_ATTEMPTS = MAX_RETRIES + 1
     }
 
-    private val client: HttpClient by lazy {
+    private val client: HttpClient =
         HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_2)
-            .connectTimeout(Duration.ofMillis(200))
+            .connectTimeout(Duration.ofMillis(1000))
             .build()
-    }
 
     suspend fun performPayment(
         paymentId: UUID,
