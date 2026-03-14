@@ -133,7 +133,7 @@ class APIController(
                 return
             }
 
-            minRequestTime = Instant.now() + Duration.ofMillis(5000)
+            minRequestTime = Instant.now() + Duration.ofSeconds(10)
         }
     }
 
