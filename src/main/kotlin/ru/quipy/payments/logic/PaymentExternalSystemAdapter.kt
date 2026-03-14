@@ -107,6 +107,8 @@ class PaymentExternalSystemAdapter(
                 val requestType = if (result.paymentSucceeded) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
                 monitoringService.increaseRequestsCounter(requestType)
                 return
+            } else {
+                logger.warn(result.message)
             }
         }
 
