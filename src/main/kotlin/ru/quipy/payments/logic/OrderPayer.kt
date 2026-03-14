@@ -3,7 +3,10 @@ package ru.quipy.payments.logic
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
 import jakarta.annotation.PostConstruct
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -70,7 +73,7 @@ class OrderPayer(
                 }
             }
 
-            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+            paymentService.submitPaymentRequest(paymentId, amount, deadline)
         }
 
         return createdAt
