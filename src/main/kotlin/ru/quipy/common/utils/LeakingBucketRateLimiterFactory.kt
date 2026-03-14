@@ -10,7 +10,6 @@ import kotlin.math.min
 
 @Service
 class LeakingBucketRateLimiterFactory : RateLimiterFactory {
-
     override fun createForAccount(
         account: PaymentExternalSystemAdapter,
         deadline: Instant
@@ -32,9 +31,9 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
         logger.info("Leaking bucket size: $bucketSize, Effective RPS: $effectiveRps")
 
         return LeakingBucketRateLimiter(
-            1000,
+            500,
             Duration.ofSeconds(1),
-            50
+            1000
         )
     }
 
