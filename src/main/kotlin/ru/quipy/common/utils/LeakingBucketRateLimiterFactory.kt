@@ -34,7 +34,7 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
         return LeakingBucketRateLimiter(
             1000,
             Duration.ofSeconds(1),
-            1000
+            750
         )
     }
 
