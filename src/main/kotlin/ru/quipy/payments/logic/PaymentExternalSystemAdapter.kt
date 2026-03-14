@@ -124,6 +124,10 @@ class PaymentExternalSystemAdapter(
         succeeded: Boolean,
         reason: String?
     ) {
+        if (reason != null) {
+            logger.warn("fail ${reason}")
+        }
+
         dbScope.launch {
             paymentESService.update(paymentId) {
                 it.logProcessing(succeeded, now().toEpochMilli(), transactionId, reason = reason)
