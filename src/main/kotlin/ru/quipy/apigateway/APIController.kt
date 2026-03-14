@@ -12,8 +12,10 @@ import ru.quipy.monitoring.RequestType
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import ru.quipy.payments.logic.PaymentExternalSystemAdapter
+import java.time.Duration
 import java.time.Instant
 import java.util.*
+import kotlin.time.ExperimentalTime
 
 @RestController
 class APIController(
@@ -27,6 +29,9 @@ class APIController(
     private var bucket: RateLimiter? = null
     private val account = paymentAccounts[0]
     private val bucketLock = Any()
+    private val minRequestTime: Instant by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        Instant.now() + Duration.ofSeconds(15)
+    }
 
     @PostMapping("/users")
     fun createUser(@RequestBody req: CreateUserRequest): User {
@@ -73,6 +78,11 @@ class APIController(
         monitoringService.increaseRequestsCounter(RequestType.INCOMING)
 
         val deadline = Instant.ofEpochMilli(deadlineTimestampMs)
+
+        if (deadline < minRequestTime) {
+            logger.error("epic fucking stuff, deadline $deadline, start time $minRequestTime")
+            throw RateLimitExceededException(17000) // стоит завязаться на ведро
+        }
 
         initBucketOnce(deadline)
 

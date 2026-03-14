@@ -84,8 +84,10 @@ class PaymentExternalSystemAdapter(
                 monitoringService.increaseRetryCounter()
             }
 
-            if (now().plus(retryDelay) > deadline) {
-                logPaymentResult(paymentId, transactionId, false, "Deadline exceeded")
+            val now = now().plus(retryDelay)
+
+            if (now > deadline) {
+                logPaymentResult(paymentId, transactionId, false, "Deadline exceeded $deadline, now $now, retry number $retryNumber, retry delay $retryDelay")
                 monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
                 return
             }
@@ -107,6 +109,8 @@ class PaymentExternalSystemAdapter(
                 val requestType = if (result.paymentSucceeded) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
                 monitoringService.increaseRequestsCounter(requestType)
                 return
+            } else {
+                logger.warn("fail: ${result.message}")
             }
         }
 
@@ -122,6 +126,10 @@ class PaymentExternalSystemAdapter(
         succeeded: Boolean,
         reason: String?
     ) {
+        if (reason != null) {
+            logger.warn("fail ${reason}")
+        }
+
         dbScope.launch {
             paymentESService.update(paymentId) {
                 it.logProcessing(succeeded, now().toEpochMilli(), transactionId, reason = reason)
@@ -151,7 +159,7 @@ class PaymentExternalSystemAdapter(
             monitoringService.recordRequestDuration(duration, body.result)
 
             if (response.statusCode() in 200..299) {
-                logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}")
+                //logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}")
                 return PaymentResult(success = true, paymentSucceeded = body.result, message = body.message)
             }
 
