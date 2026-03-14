@@ -152,7 +152,7 @@ class PaymentExternalSystemAdapter(
             monitoringService.recordRequestDuration(duration, body.result)
 
             if (response.statusCode() in 200..299) {
-                logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+                logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}")
                 return PaymentResult(success = true, paymentSucceeded = body.result, message = body.message)
             }
 
