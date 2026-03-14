@@ -5,8 +5,6 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.github.resilience4j.kotlin.ratelimiter.executeSuspendFunction
 import io.github.resilience4j.ratelimiter.RateLimiter
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -14,8 +12,6 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.time.delay
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import ru.quipy.common.utils.OngoingWindow
-import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
@@ -24,8 +20,8 @@ import java.net.URI
 import java.net.http.*
 import java.time.Duration
 import java.time.Instant
+import java.time.Instant.now
 import java.util.*
-import java.util.concurrent.Executors
 import kotlin.math.pow
 
 class PaymentExternalSystemAdapter(
@@ -38,9 +34,6 @@ class PaymentExternalSystemAdapter(
     private val rateLimiter: RateLimiter,
     private val dbScope: CoroutineScope
 ) {
-
-    private val dispatcherPayment = Executors.newFixedThreadPool(60).asCoroutineDispatcher()
-
     companion object {
         val logger: Logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
 
@@ -63,7 +56,6 @@ class PaymentExternalSystemAdapter(
     suspend fun performPayment(
         paymentId: UUID,
         amount: Int,
-        paymentStartedAt: Long,
         deadline: Instant
     ) {
         val transactionId = UUID.randomUUID()
@@ -83,7 +75,6 @@ class PaymentExternalSystemAdapter(
         transactionId: UUID,
         deadline: Instant
     ) {
-        val accountName = properties.accountName
         var lastResult: PaymentResult? = null
 
         for (attempt in 1..MAX_ATTEMPTS) {
@@ -106,7 +97,7 @@ class PaymentExternalSystemAdapter(
 
             val result = ongoingWindow.withPermit {
                 rateLimiter.executeSuspendFunction {
-                    sendRequestReal(request, paymentId, transactionId, attempt)
+                    sendRequestReal(request, paymentId, transactionId)
                 }
             }
 
@@ -142,8 +133,7 @@ class PaymentExternalSystemAdapter(
     private suspend fun sendRequestReal(
         request: HttpRequest,
         paymentId: UUID,
-        transactionId: UUID,
-        i: Int
+        transactionId: UUID
     ): PaymentResult {
         val accountName = properties.accountName
 
@@ -165,14 +155,14 @@ class PaymentExternalSystemAdapter(
                 logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
                 return PaymentResult(success = true, paymentSucceeded = body.result, message = body.message)
             }
-            
-            return PaymentResult(success = false, paymentSucceeded = false, message = "HTTP ${response.statusCode()}")
-        } catch (e: HttpTimeoutException) {
-            return PaymentResult(success = false, paymentSucceeded = false, message = "Request timeout")
-        } catch (e: HttpConnectTimeoutException) {
-            return PaymentResult(success = false, paymentSucceeded = false, message = "Connection timeout")
+
+            return PaymentResult.paymentFailed("HTTP ${response.statusCode()}")
+        } catch (_: HttpTimeoutException) {
+            return PaymentResult.paymentFailed("Request timeout")
+        } catch (_: HttpConnectTimeoutException) {
+            return PaymentResult.paymentFailed("Connection timeout")
         } catch (e: Exception) {
-            return PaymentResult(success = false, paymentSucceeded = false, message = e.message ?: "Unknown error")
+            return PaymentResult.paymentFailed(e.message ?: "Unknown error")
         }
     }
 
@@ -194,6 +184,8 @@ data class PaymentResult(
     val success: Boolean,           // true if request completed successfully (got 2xx response)
     val paymentSucceeded: Boolean,  // true if payment was actually successful
     val message: String?            // reason/message from external system or error
-)
-
-fun now(): Instant = Instant.now()
+) {
+    companion object {
+        fun paymentFailed(message: String?) = PaymentResult(false, paymentSucceeded = false, message = message)
+    }
+}

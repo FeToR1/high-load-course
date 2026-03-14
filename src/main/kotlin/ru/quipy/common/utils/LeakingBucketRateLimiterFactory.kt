@@ -18,16 +18,16 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
         val processingTime = calculateTotalProcessingTime(account)
         val ttl = Duration.ofMillis(1000)
 
-        val bucketSize = if (ttl < processingTime) {
-            DEFAULT_BUCKET_SIZE
-        } else {
-            calculateBucketSize(account, ttl, processingTime)
-        }
-
         val effectiveRps = min(
             account.rateLimitPerSec().toDouble(),
             account.parallelRequests().toDouble() / processingTime.toMillis() * 1000
         )
+
+        val bucketSize = if (ttl < processingTime) {
+            DEFAULT_BUCKET_SIZE
+        } else {
+            calculateBucketSize(ttl, processingTime, effectiveRps)
+        }
 
         logger.info("Leaking bucket size: $bucketSize, Effective RPS: $effectiveRps")
 
@@ -43,18 +43,12 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
     }
 
     private fun calculateBucketSize(
-        account: PaymentExternalSystemAdapter,
         ttl: Duration,
-        processingTime: Duration
+        processingTime: Duration,
+        effective: Double
     ): Int {
         val processingWaitLimit = ttl.minus(processingTime)
-
-        val effectiveRps = min(
-            account.rateLimitPerSec().toDouble(),
-            account.parallelRequests().toDouble() / processingTime.toMillis() * 1000
-        )
-
-        return max(1, (effectiveRps * processingWaitLimit.toMillis() / 1000).toInt())
+        return max(1, (effective * processingWaitLimit.toMillis() / 1000).toInt())
     }
 
     companion object {
