@@ -30,7 +30,7 @@ class APIController(
     private val account = paymentAccounts[0]
     private val bucketLock = Any()
     private val minRequestTime: Instant by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        Instant.now() + Duration.ofSeconds(10)
+        Instant.now() + Duration.ofSeconds(15)
     }
 
     @PostMapping("/users")
