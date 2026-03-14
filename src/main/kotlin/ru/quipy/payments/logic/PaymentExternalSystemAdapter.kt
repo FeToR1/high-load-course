@@ -49,7 +49,7 @@ class PaymentExternalSystemAdapter(
     private val client: HttpClient =
         HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_2)
-            .connectTimeout(Duration.ofMillis(200))
+            .connectTimeout(Duration.ofMillis(1000))
             .build()
 
     suspend fun performPayment(
