@@ -28,6 +28,10 @@ class APIController(
     private val account = paymentAccounts[0]
     private val bucketLock = Any()
 
+    @Volatile
+    private var startTime: Instant? = null
+    private val startTimeLock = Any()
+
     @PostMapping("/users")
     fun createUser(@RequestBody req: CreateUserRequest): User {
         return User(UUID.randomUUID(), req.name)
@@ -74,7 +78,12 @@ class APIController(
 
         val deadline = Instant.ofEpochMilli(deadlineTimestampMs)
 
+        initStartTimeOnce()
         initBucketOnce(deadline)
+
+        if (deadline < startTime) {
+            logger.error("epic fucking stuff, deadline $deadline, start time $startTime")
+        }
 
         if (!bucket!!.tick()) {
             val processTime = account.averageProcessingTime().toMillis()
@@ -109,6 +118,20 @@ class APIController(
             }
 
             bucket = rateLimiterFactory.createForAccount(account, deadline)
+        }
+    }
+
+    private fun initStartTimeOnce() {
+        if (startTime != null) {
+            return
+        }
+
+        synchronized(startTimeLock) {
+            if (startTime != null) {
+                return
+            }
+
+            startTime = Instant.now()
         }
     }
 
