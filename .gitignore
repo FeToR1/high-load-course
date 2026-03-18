@@ -36,3 +36,6 @@ prometheus/data
 ### VS Code ###
 .vscode/
 /.env
+
+### Roo ###
+.roo/

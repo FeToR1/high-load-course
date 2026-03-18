@@ -41,8 +41,8 @@ class PaymentExternalSystemAdapter(
 
         const val RETRY_DELAY_BASE = 2.0
         const val RETRY_DELAY_COEFF = 50
-        const val MAX_DELAY_MS = 10000000L
-        const val MAX_RETRIES = 2
+        const val MAX_DELAY_MS = 10L
+        const val MAX_RETRIES = 0
         const val MAX_ATTEMPTS = MAX_RETRIES + 1
     }
 
@@ -62,7 +62,7 @@ class PaymentExternalSystemAdapter(
         val request = HttpRequest.newBuilder()
             .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=${properties.serviceName}&token=$token&accountName=${properties.accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
             .POST(HttpRequest.BodyPublishers.noBody())
-            .timeout(monitoringService.get90thPercentileTimeout(properties.accountName))
+            .timeout(Duration.ofMillis(2000))  // Fixed timeout: allow external service to process ~1000ms +  buffer
             .build()
 
         sendRequest(request, paymentId, transactionId, deadline)
@@ -114,7 +114,7 @@ class PaymentExternalSystemAdapter(
             }
         }
 
-        // All attempts failed
+        // All attempts failed 
         val reason = lastResult?.message ?: "All retry attempts failed"
         logPaymentResult(paymentId, transactionId, false, reason)
         monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
