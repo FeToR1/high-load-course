@@ -41,8 +41,8 @@ class PaymentExternalSystemAdapter(
 
         const val RETRY_DELAY_BASE = 2.0
         const val RETRY_DELAY_COEFF = 50
-        const val MAX_DELAY_MS = 10L
-        const val MAX_RETRIES = 0
+        const val MAX_DELAY_MS = 100000L
+        const val MAX_RETRIES = 2
         const val MAX_ATTEMPTS = MAX_RETRIES + 1
     }
 
