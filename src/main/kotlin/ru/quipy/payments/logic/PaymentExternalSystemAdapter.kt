@@ -134,7 +134,7 @@ class PaymentExternalSystemAdapter(
             }
         }
 
-        // All attempts failed
+        // All attempts failed 
         val reason = lastResult?.message ?: "All retry attempts failed"
         logPaymentResult(paymentId, transactionId, false, reason)
         monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
