@@ -44,23 +44,6 @@ class PaymentExternalSystemAdapter(
         const val MAX_DELAY_MS = 10L
         const val MAX_RETRIES = 0
         const val MAX_ATTEMPTS = MAX_RETRIES + 1
-        const val MAX_LOG_COUNT = 500
-        
-        @Volatile
-        private var logCounter = 0
-        
-        private fun shouldLog(): Boolean {
-            return logCounter < MAX_LOG_COUNT
-        }
-        
-        private fun incrementLogCounter() {
-            if (logCounter < MAX_LOG_COUNT) {
-                logCounter++
-                if (logCounter == MAX_LOG_COUNT) {
-                    logger.warn("Reached maximum log count ($MAX_LOG_COUNT). Suppressing further logs from PaymentExternalSystemAdapter.")
-                }
-            }
-        }
     }
 
     private val client: HttpClient =
@@ -127,10 +110,7 @@ class PaymentExternalSystemAdapter(
                 monitoringService.increaseRequestsCounter(requestType)
                 return
             } else {
-                if (shouldLog()) {
-                    logger.warn("fail: ${result.message}")
-                    incrementLogCounter()
-                }
+                logger.warn("fail: ${result.message}")
             }
         }
 
@@ -146,9 +126,8 @@ class PaymentExternalSystemAdapter(
         succeeded: Boolean,
         reason: String?
     ) {
-        if (reason != null && shouldLog()) {
+        if (reason != null) {
             logger.warn("fail ${reason}")
-            incrementLogCounter()
         }
 
         dbScope.launch {
