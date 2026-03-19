@@ -79,7 +79,7 @@ class PaymentExternalSystemAdapter(
         val request = HttpRequest.newBuilder()
             .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=${properties.serviceName}&token=$token&accountName=${properties.accountName}&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
             .POST(HttpRequest.BodyPublishers.noBody())
-            .timeout(monitoringService.get90thPercentileTimeout(properties.accountName))
+            .timeout(Duration.ofMillis(2000))  // Fixed timeout: allow external service to process ~1000ms + buffer
             .build()
 
         sendRequest(request, paymentId, transactionId, deadline)
