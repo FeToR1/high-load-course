@@ -14,24 +14,26 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
         account: PaymentExternalSystemAdapter,
         deadline: Instant
     ): LeakingBucketRateLimiter {
-        val processingTime = calculateTotalProcessingTime(account)
-        val ttl = Duration.ofMillis(1000)
+//        val processingTime = calculateTotalProcessingTime(account)
+//        val ttl = Duration.ofMillis(1000)
+//
+//        val effectiveRps = min(
+//            account.rateLimitPerSec().toDouble(),
+//            account.parallelRequests().toDouble() / processingTime.toMillis() * 1000
+//        )
+//
+//        val bucketSize = if (ttl < processingTime) {
+//            DEFAULT_BUCKET_SIZE
+//        } else {
+//            calculateBucketSize(ttl, processingTime, effectiveRps)
+//        }
+//
+//        logger.info("Leaking bucket size: $bucketSize, Effective RPS: $effectiveRps")
 
-        val effectiveRps = min(
-            account.rateLimitPerSec().toDouble(),
-            account.parallelRequests().toDouble() / processingTime.toMillis() * 1000
-        )
-
-        val bucketSize = if (ttl < processingTime) {
-            DEFAULT_BUCKET_SIZE
-        } else {
-            calculateBucketSize(ttl, processingTime, effectiveRps)
-        }
-
-        logger.info("Leaking bucket size: $bucketSize, Effective RPS: $effectiveRps")
+        // TODO: calculate bucket size dynamically.
 
         return LeakingBucketRateLimiter(
-            3950,
+            account.rateLimitPerSec().toLong(),
             Duration.ofSeconds(1),
             4500
         )
