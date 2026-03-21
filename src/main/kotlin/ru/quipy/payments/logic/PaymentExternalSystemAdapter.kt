@@ -55,7 +55,8 @@ class PaymentExternalSystemAdapter(
     suspend fun performPayment(
         paymentId: UUID,
         amount: Int,
-        deadline: Instant
+        deadline: Instant,
+        paymentStartedAt: Long
     ) {
         val transactionId = UUID.randomUUID()
 
@@ -65,14 +66,15 @@ class PaymentExternalSystemAdapter(
             .timeout(Duration.ofMillis(2000))
             .build()
 
-        sendRequestWithRetries(request, paymentId, transactionId, deadline)
+        sendRequestWithRetries(request, paymentId, transactionId, deadline, paymentStartedAt)
     }
 
     suspend fun sendRequestWithRetries(
         request: HttpRequest,
         paymentId: UUID,
         transactionId: UUID,
-        deadline: Instant
+        deadline: Instant,
+        paymentStartedAt: Long
     ) {
         var lastResult: PaymentResult? = null
 
@@ -103,7 +105,7 @@ class PaymentExternalSystemAdapter(
 
             val result = ongoingWindow.withPermit {
                 rateLimiter.executeSuspendFunction {
-                    sendRequest(request, paymentId, transactionId)
+                    sendRequest(request, paymentId, transactionId, paymentStartedAt)
                 }
             }
 
@@ -143,10 +145,17 @@ class PaymentExternalSystemAdapter(
     private suspend fun sendRequest(
         request: HttpRequest,
         paymentId: UUID,
-        transactionId: UUID
+        transactionId: UUID,
+        paymentStartedAt: Long
     ): PaymentResult {
         try {
             val startTime = now()
+            dbScope.launch {
+                paymentESService.update(paymentId) {
+                    it.logSubmission(success = true, transactionId, now().toEpochMilli(),
+                        Duration.ofMillis(now().toEpochMilli() - paymentStartedAt))
+                }
+            }
             val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
             val duration = Duration.between(startTime, now()).toMillis()
 

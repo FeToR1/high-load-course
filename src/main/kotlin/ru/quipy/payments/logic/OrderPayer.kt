@@ -73,7 +73,7 @@ class OrderPayer(
                 }
             }
 
-            paymentService.submitPaymentRequest(paymentId, amount, deadline)
+            paymentService.submitPaymentRequest(paymentId, amount, deadline, createdAt)
         }
 
         return createdAt

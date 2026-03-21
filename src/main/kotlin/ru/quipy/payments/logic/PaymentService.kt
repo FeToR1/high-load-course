@@ -13,9 +13,10 @@ class PaymentService(
     suspend fun submitPaymentRequest(
         paymentId: UUID,
         amount: Int,
-        deadline: Instant
+        deadline: Instant,
+        paymentStartedAt: Long
     ) {
         val account = accountProvider.get()
-        account.performPayment(paymentId, amount, deadline)
+        account.performPayment(paymentId, amount, deadline, paymentStartedAt)
     }
 }
