@@ -82,11 +82,6 @@ class PaymentExternalSystemAdapterImpl(
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-        scope.launch {
-            paymentESService.update(paymentId) {
-                it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
-            }
-        }
 
         val request = HttpRequest.newBuilder()
             .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
@@ -96,7 +91,7 @@ class PaymentExternalSystemAdapterImpl(
 
         ongoingWindow.acquireAsync()
         try {
-            sendRequest(request, paymentId, transactionId, deadline * 1000, esDispatcher)
+            sendRequest(request, paymentId, transactionId, deadline * 1000, esDispatcher, paymentStartedAt)
         } finally {
             ongoingWindow.release()
         }
@@ -107,7 +102,8 @@ class PaymentExternalSystemAdapterImpl(
         paymentId: UUID,
         transactionId: UUID,
         deadlineMs: Long,
-        esDispatcher: CoroutineDispatcher
+        esDispatcher: CoroutineDispatcher,
+        paymentStartedAt: Long
     ) {
         for (i in 1..MAX_RETRIES) {
             rateLimiter.tickAsync()
@@ -133,6 +129,11 @@ class PaymentExternalSystemAdapterImpl(
 
             try {
                 val startTime = now()
+                scope.launch {
+                    paymentESService.update(paymentId) {
+                        it.logSubmission(success = true, transactionId, startTime, Duration.ofMillis(now() - paymentStartedAt))
+                    }
+                }
                 val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
                 val duration = now() - startTime
 
