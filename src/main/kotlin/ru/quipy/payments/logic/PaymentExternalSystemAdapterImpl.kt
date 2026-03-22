@@ -83,14 +83,6 @@ class PaymentExternalSystemAdapterImpl(
 
         val transactionId = UUID.randomUUID()
 
-        // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
-        // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-        dbScope.launch {
-            paymentESService.update(paymentId) {
-                it.logSubmission(success = true, transactionId, now().toEpochMilli(), Duration.ofMillis(now().toEpochMilli() - paymentStartedAt))
-            }
-        }
-
         val request = HttpRequest.newBuilder()
             .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
             .POST(HttpRequest.BodyPublishers.noBody())
@@ -99,7 +91,7 @@ class PaymentExternalSystemAdapterImpl(
 
         ongoingWindow.acquireAsync()
         try {
-            sendRequest(request, paymentId, transactionId, deadline)
+            sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt)
         } finally {
             ongoingWindow.release()
         }
@@ -109,7 +101,8 @@ class PaymentExternalSystemAdapterImpl(
         request: HttpRequest,
         paymentId: UUID,
         transactionId: UUID,
-        deadline: Instant
+        deadline: Instant,
+        paymentStartedAt: Long
     ) {
         var lastResult: PaymentResult? = null
 
@@ -129,6 +122,14 @@ class PaymentExternalSystemAdapterImpl(
 
             if (retryDelay > Duration.ZERO) {
                 delay(retryDelay.toMillis())
+            }
+
+            // Логируем каждую попытку отправки запроса
+            // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования
+            dbScope.launch {
+                paymentESService.update(paymentId) {
+                    it.logSubmission(success = true, transactionId, now().toEpochMilli(), Duration.ofMillis(now().toEpochMilli() - paymentStartedAt))
+                }
             }
 
             rateLimiter.tickAsync()
