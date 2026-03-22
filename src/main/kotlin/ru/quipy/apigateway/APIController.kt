@@ -64,7 +64,7 @@ class APIController(
     }
 
     @PostMapping("/orders/{orderId}/payment")
-    fun payOrder(@PathVariable orderId: UUID, @RequestParam deadlineMillis: Long): PaymentSubmissionDto {
+    fun payOrder(@PathVariable orderId: UUID, @RequestParam("deadline") deadlineMillis: Long): PaymentSubmissionDto {
         monitoringService.increaseRequestsCounter(RequestType.INCOMING)
 
         val deadline = Instant.ofEpochMilli(deadlineMillis)
