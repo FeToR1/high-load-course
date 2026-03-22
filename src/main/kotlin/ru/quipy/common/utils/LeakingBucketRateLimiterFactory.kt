@@ -30,7 +30,7 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
         return LeakingBucketRateLimiter(
             account.rateLimitPerSec().toLong(),
             Duration.ofSeconds(1),
-            bucketSize
+            4500
         )
     }
 
