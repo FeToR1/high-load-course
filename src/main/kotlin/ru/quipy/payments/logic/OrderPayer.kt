@@ -3,56 +3,46 @@ package ru.quipy.payments.logic
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
 import jakarta.annotation.PostConstruct
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.CallerBlockingRejectedExecutionHandler
 import ru.quipy.common.utils.NamedThreadFactory
 import ru.quipy.common.utils.RateLimitExceededException
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
+import java.time.Instant
 import java.util.*
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.function.Supplier
 
 @Service
 class OrderPayer(
-    paymentAccounts: List<PaymentExternalSystemAdapter>,
+    accountProvider: Supplier<PaymentExternalSystemAdapter>,
+    private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
+    private val paymentService: PaymentService,
+    private val dbScope: CoroutineScope
 ) {
 
-    companion object {
-        val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
-    }
-
-    val processTime = paymentAccounts[0].averageProcessingTime().toMillis()
-
-    @Autowired
-    private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
-
-    @Autowired
-    private lateinit var paymentService: PaymentService
-
-    @Autowired
-    @Qualifier("eventSourcingDispatcher")
-    private lateinit var esDispatcher: ExecutorCoroutineDispatcher
-
-    private val threadPoolSize = 64
+    private val processTime = accountProvider.get().averageProcessingTime().toMillis()
 
     private val paymentExecutor = ThreadPoolExecutor(
-        threadPoolSize,
-        threadPoolSize,
+        THREAD_POOL_SIZE,
+        THREAD_POOL_SIZE,
         0,
         TimeUnit.SECONDS,
-        LinkedBlockingQueue(1000),
+        LinkedBlockingQueue(8000),
         NamedThreadFactory("payment-submission-executor"),
         CallerBlockingRejectedExecutionHandler()
     )
 
-    private val scope = CoroutineScope(paymentExecutor.asCoroutineDispatcher())
+    val executorScope = CoroutineScope(SupervisorJob() + paymentExecutor.asCoroutineDispatcher())
 
     @PostConstruct
     fun registerPoolSizeMetrics() {
@@ -64,15 +54,15 @@ class OrderPayer(
             .register(Metrics.globalRegistry)
     }
 
-    fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
+    fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Instant): Long {
         val createdAt = System.currentTimeMillis()
 
         if (paymentExecutor.queue.remainingCapacity() == 0) {
             throw RateLimitExceededException(processTime * 5)
         }
 
-        scope.launch {
-            val createdEvent = withContext(esDispatcher) {
+        executorScope.launch {
+            dbScope.launch {
                 paymentESService.create {
                     it.create(
                         paymentId,
@@ -81,11 +71,15 @@ class OrderPayer(
                     )
                 }
             }
-            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         }
 
         return createdAt
+    }
+
+    companion object {
+        val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
+        const val THREAD_POOL_SIZE = 64
     }
 }

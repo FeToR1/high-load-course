@@ -21,6 +21,7 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.net.http.HttpTimeoutException
 import java.time.Duration
+import java.time.Instant
 import java.util.*
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadPoolExecutor
@@ -35,10 +36,8 @@ class PaymentExternalSystemAdapterImpl(
     private val monitoringService: MonitoringService,
     private val ongoingWindow: OngoingWindow,
     private val rateLimiter: SlidingWindowRateLimiter,
-    val esDispatcher: ExecutorCoroutineDispatcher
+    private val dbScope: CoroutineScope
 ) : PaymentExternalSystemAdapter {
-
-    private val scope = CoroutineScope(esDispatcher)
 
     companion object {
         val logger: Logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
@@ -78,7 +77,7 @@ class PaymentExternalSystemAdapterImpl(
         paymentId: UUID,
         amount: Int,
         paymentStartedAt: Long,
-        deadline: Long
+        deadline: Instant
     ) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
@@ -86,9 +85,9 @@ class PaymentExternalSystemAdapterImpl(
 
         // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
         // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-        scope.launch {
+        dbScope.launch {
             paymentESService.update(paymentId) {
-                it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+                it.logSubmission(success = true, transactionId, now().toEpochMilli(), Duration.ofMillis(now().toEpochMilli() - paymentStartedAt))
             }
         }
 
@@ -100,7 +99,7 @@ class PaymentExternalSystemAdapterImpl(
 
         ongoingWindow.acquireAsync()
         try {
-            sendRequest(request, paymentId, transactionId, deadline * 1000, esDispatcher)
+            sendRequest(request, paymentId, transactionId, deadline)
         } finally {
             ongoingWindow.release()
         }
@@ -110,8 +109,7 @@ class PaymentExternalSystemAdapterImpl(
         request: HttpRequest,
         paymentId: UUID,
         transactionId: UUID,
-        deadlineMs: Long,
-        esDispatcher: CoroutineDispatcher
+        deadline: Instant
     ) {
         var lastResult: PaymentResult? = null
 
@@ -123,13 +121,13 @@ class PaymentExternalSystemAdapterImpl(
                 monitoringService.increaseRetryCounter()
             }
 
-            if (now() + retryDelay.toMillis() > deadlineMs) {
+            if (now().plus(retryDelay) > deadline) {
                 logPaymentResult(paymentId, transactionId, false, "Deadline exceeded")
                 monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
                 return
             }
 
-            if (retryDelay.toMillis() > 0) {
+            if (retryDelay > Duration.ZERO) {
                 delay(retryDelay.toMillis())
             }
 
@@ -158,9 +156,9 @@ class PaymentExternalSystemAdapterImpl(
         succeeded: Boolean,
         reason: String?
     ) {
-        scope.launch {
+        dbScope.launch {
             paymentESService.update(paymentId) {
-                it.logProcessing(succeeded, now(), transactionId, reason = reason)
+                it.logProcessing(succeeded, now().toEpochMilli(), transactionId, reason = reason)
             }
         }
     }
@@ -174,7 +172,7 @@ class PaymentExternalSystemAdapterImpl(
         try {
             val startTime = now()
             val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
-            val duration = now() - startTime
+            val duration = Duration.between(startTime, now())
 
             val body = try {
                 mapper.readValue(response.body(), ExternalSysResponse::class.java)
@@ -183,7 +181,7 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             monitoringService.increaseRequestsCounter(RequestType.OUTGOING)
-            monitoringService.recordRequestDuration(duration, body.result)
+            monitoringService.recordRequestDuration(duration.toMillis(), body.result)
 
             if (response.statusCode() in 200..299) {
                 logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
@@ -228,4 +226,4 @@ data class PaymentResult(
     val message: String?
 )
 
-fun now() = System.currentTimeMillis()
+fun now() = Instant.now()

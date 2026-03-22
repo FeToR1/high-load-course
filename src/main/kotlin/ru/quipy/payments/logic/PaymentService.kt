@@ -1,13 +1,14 @@
 package ru.quipy.payments.logic
 
 import java.time.Duration
+import java.time.Instant
 import java.util.*
 
 interface PaymentService {
     /**
      * Submit payment request to some external service.
      */
-    suspend fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long)
+    suspend fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Instant)
 }
 
 /**
@@ -17,7 +18,7 @@ interface PaymentService {
 
  */
 interface PaymentExternalSystemAdapter {
-    suspend fun performPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long)
+    suspend fun performPayment(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Instant)
 
     fun name(): String
 
