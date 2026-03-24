@@ -4,10 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.future.await
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.OngoingWindow
@@ -85,6 +82,7 @@ class PaymentExternalSystemAdapterImpl(
             .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
             .POST(HttpRequest.BodyPublishers.noBody())
             .timeout(Duration.ofSeconds(40))
+            .header("x-idempotency-key", "$transactionId")
             .build()
 
         ongoingWindow.acquireAsync()
@@ -169,7 +167,18 @@ class PaymentExternalSystemAdapterImpl(
     ): PaymentResult {
         try {
             val startTime = now()
-            val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
+
+            val response = withContext(Dispatchers.IO) {
+                val future1 = client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+                delay(100)
+                if (future1.isDone) return@withContext future1.get()
+                val future2 = client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+                while (!future1.isDone && !future2.isDone) {
+                    delay(100)
+                }
+                if (future1.isDone) future1.get() else future2.get()
+            }
+
             val duration = Duration.between(startTime, now())
 
             val body = try {
