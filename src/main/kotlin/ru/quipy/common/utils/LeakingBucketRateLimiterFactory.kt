@@ -30,7 +30,7 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
         return LeakingBucketRateLimiter(
             account.rateLimitPerSec().toLong(),
             Duration.ofSeconds(1),
-            bucketSize
+            4500
         )
     }
 
@@ -50,12 +50,12 @@ class LeakingBucketRateLimiterFactory : RateLimiterFactory {
 
         val effectiveRps = min(
             account.rateLimitPerSec().toDouble(),
-            account.parallelRequests().toDouble() / totalProcessingTime.seconds
+            account.parallelRequests().toDouble() / (totalProcessingTime.toMillis() / 1000.0)
         )
 
         logger.info("Effective RPS: $effectiveRps")
 
-        return max(1, (effectiveRps * processingWaitLimit.seconds).toInt())
+        return max(1, (effectiveRps * (processingWaitLimit.toMillis() / 1000.0)).toInt())
     }
 
     companion object {

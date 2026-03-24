@@ -3,7 +3,10 @@ package ru.quipy.payments.config
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
+import kotlinx.coroutines.SupervisorJob
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.beans.factory.annotation.Value
@@ -47,12 +50,17 @@ class PaymentAccountsConfig {
     @Autowired
     private lateinit var monitoringService: MonitoringService
 
-    @Autowired
-    @Qualifier("eventSourcingDispatcher")
-    private lateinit var esDispatcher: ExecutorCoroutineDispatcher
+    @Bean
+    fun dbScope(
+        @Qualifier("eventSourcingDispatcher")
+        esDispatcher: ExecutorCoroutineDispatcher
+    ) = CoroutineScope(SupervisorJob() + Dispatchers.IO + esDispatcher)
 
     @Bean
-    fun accountAdapters(paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>): List<PaymentExternalSystemAdapter> {
+    fun accountAdapters(
+        paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
+        dbScope: CoroutineScope
+    ): List<PaymentExternalSystemAdapter> {
         val request = HttpRequest.newBuilder()
             .uri(URI("http://${paymentProviderHostPort}/external/accounts?serviceName=$serviceName&token=$token"))
             .GET()
@@ -77,7 +85,7 @@ class PaymentAccountsConfig {
                     monitoringService,
                     OngoingWindow(it.parallelRequests),
                     SlidingWindowRateLimiter(it.rateLimitPerSec.toLong()),
-                    esDispatcher
+                    dbScope
                 )
             }
     }
