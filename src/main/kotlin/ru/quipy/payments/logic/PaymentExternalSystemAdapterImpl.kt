@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.future.await
+import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.OngoingWindow
@@ -15,11 +17,7 @@ import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpConnectTimeoutException
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.net.http.HttpTimeoutException
+import java.net.http.*
 import java.time.Duration
 import java.time.Instant
 import java.util.*
@@ -133,7 +131,7 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             rateLimiter.tickAsync()
-            val result = sendRequestReal(request, paymentId, transactionId, attempt)
+            val result = sendRequestReal(request, paymentId, transactionId)
 
             lastResult = result
 
@@ -167,8 +165,7 @@ class PaymentExternalSystemAdapterImpl(
     private suspend fun sendRequestReal(
         request: HttpRequest,
         paymentId: UUID,
-        transactionId: UUID,
-        attempt: Int
+        transactionId: UUID
     ): PaymentResult {
         try {
             val startTime = now()
@@ -190,9 +187,9 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             return PaymentResult(success = false, paymentSucceeded = false, message = "HTTP ${response.statusCode()}")
-        } catch (e: HttpTimeoutException) {
+        } catch (_: HttpTimeoutException) {
             return PaymentResult(success = false, paymentSucceeded = false, message = "Request timeout")
-        } catch (e: HttpConnectTimeoutException) {
+        } catch (_: HttpConnectTimeoutException) {
             return PaymentResult(success = false, paymentSucceeded = false, message = "Connection timeout")
         } catch (e: Exception) {
             return PaymentResult(success = false, paymentSucceeded = false, message = e.message ?: "Unknown error")

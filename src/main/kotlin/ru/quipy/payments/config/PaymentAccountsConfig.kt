@@ -50,10 +50,6 @@ class PaymentAccountsConfig {
     @Autowired
     private lateinit var monitoringService: MonitoringService
 
-    @Autowired
-    @Qualifier("eventSourcingDispatcher")
-    private lateinit var esDispatcher: ExecutorCoroutineDispatcher
-
     @Bean
     fun dbScope(
         @Qualifier("eventSourcingDispatcher")
