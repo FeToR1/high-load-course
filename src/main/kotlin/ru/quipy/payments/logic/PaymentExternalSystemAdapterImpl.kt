@@ -4,9 +4,16 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.future.await
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.OngoingWindow
@@ -16,10 +23,14 @@ import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.URI
-import java.net.http.*
+import java.net.http.HttpClient
+import java.net.http.HttpConnectTimeoutException
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.net.http.HttpTimeoutException
 import java.time.Duration
 import java.time.Instant
-import java.util.*
+import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadPoolExecutor
 import kotlin.math.pow
@@ -87,17 +98,13 @@ class PaymentExternalSystemAdapterImpl(
             .header("x-idempotency-key", "$transactionId")
             .build()
 
-        ongoingWindow.acquireAsync()
-        try {
-            select<Unit> {
-                async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
-                async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
-                async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
-            }
-            coroutineContext.cancelChildren()
-        } finally {
-            ongoingWindow.release()
+        select {
+            async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
+            async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
+            async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
         }
+
+        coroutineContext.cancelChildren()
     }
 
     suspend fun sendRequest(
@@ -141,7 +148,9 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             rateLimiter.tickAsync()
+            ongoingWindow.acquireAsync()
             val result = sendRequestReal(request, paymentId, transactionId)
+            ongoingWindow.release()
 
             lastResult = result
 
