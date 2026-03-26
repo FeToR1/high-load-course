@@ -5,6 +5,8 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
 import kotlinx.coroutines.*
+import kotlinx.coroutines.future.await
+import kotlinx.coroutines.selects.select
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.OngoingWindow
@@ -111,6 +113,11 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             if (now().plus(retryDelay) > deadline) {
+                dbScope.launch {
+                    paymentESService.update(paymentId) {
+                        it.logSubmission(success = true, transactionId, now().toEpochMilli(), Duration.ofMillis(now().toEpochMilli() - paymentStartedAt))
+                    }
+                }
                 logPaymentResult(paymentId, transactionId, false, "Deadline exceeded")
                 monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
                 return
@@ -164,20 +171,26 @@ class PaymentExternalSystemAdapterImpl(
         request: HttpRequest,
         paymentId: UUID,
         transactionId: UUID
-    ): PaymentResult {
+    ): PaymentResult = coroutineScope {
         try {
             val startTime = now()
 
-            val response = withContext(Dispatchers.IO) {
-                val future1 = client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                delay(100)
-                if (future1.isDone) return@withContext future1.get()
-                val future2 = client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                while (!future1.isDone && !future2.isDone) {
-                    delay(100)
-                }
-                if (future1.isDone) future1.get() else future2.get()
+            val response = select<HttpResponse<String>> {
+                async(Dispatchers.IO) {
+                    client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
+                }.onAwait { it }
+                
+                async(Dispatchers.IO) {
+                    client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
+                }.onAwait { it }
+                
+                async(Dispatchers.IO) {
+                    client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
+                }.onAwait { it }
             }
+            
+            // Cancel remaining requests after first one completes
+            coroutineContext.cancelChildren()
 
             val duration = Duration.between(startTime, now())
 
@@ -192,16 +205,16 @@ class PaymentExternalSystemAdapterImpl(
 
             if (response.statusCode() in 200..299) {
                 logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-                return PaymentResult(success = true, paymentSucceeded = body.result, message = body.message)
+                return@coroutineScope PaymentResult(success = true, paymentSucceeded = body.result, message = body.message)
             }
 
-            return PaymentResult(success = false, paymentSucceeded = false, message = "HTTP ${response.statusCode()}")
+            return@coroutineScope PaymentResult(success = false, paymentSucceeded = false, message = "HTTP ${response.statusCode()}")
         } catch (_: HttpTimeoutException) {
-            return PaymentResult(success = false, paymentSucceeded = false, message = "Request timeout")
+            return@coroutineScope PaymentResult(success = false, paymentSucceeded = false, message = "Request timeout")
         } catch (_: HttpConnectTimeoutException) {
-            return PaymentResult(success = false, paymentSucceeded = false, message = "Connection timeout")
+            return@coroutineScope PaymentResult(success = false, paymentSucceeded = false, message = "Connection timeout")
         } catch (e: Exception) {
-            return PaymentResult(success = false, paymentSucceeded = false, message = e.message ?: "Unknown error")
+            return@coroutineScope PaymentResult(success = false, paymentSucceeded = false, message = e.message ?: "Unknown error")
         }
     }
 
