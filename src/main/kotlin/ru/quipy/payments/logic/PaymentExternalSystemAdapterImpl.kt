@@ -75,7 +75,7 @@ class PaymentExternalSystemAdapterImpl(
         amount: Int,
         paymentStartedAt: Long,
         deadline: Instant
-    ) {
+    ) = coroutineScope {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -89,7 +89,12 @@ class PaymentExternalSystemAdapterImpl(
 
         ongoingWindow.acquireAsync()
         try {
-            sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt)
+            select<Unit> {
+                async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
+                async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
+                async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
+            }
+            coroutineContext.cancelChildren()
         } finally {
             ongoingWindow.release()
         }
@@ -171,26 +176,13 @@ class PaymentExternalSystemAdapterImpl(
         request: HttpRequest,
         paymentId: UUID,
         transactionId: UUID
-    ): PaymentResult = coroutineScope {
+    ): PaymentResult {
         try {
             val startTime = now()
 
-            val response = select<HttpResponse<String>> {
-                async(Dispatchers.IO) {
-                    client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
-                }.onAwait { it }
-                
-                async(Dispatchers.IO) {
-                    client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
-                }.onAwait { it }
-                
-                async(Dispatchers.IO) {
-                    client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
-                }.onAwait { it }
+            val response = withContext(Dispatchers.IO) {
+                client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
             }
-            
-            // Cancel remaining requests after first one completes
-            coroutineContext.cancelChildren()
 
             val duration = Duration.between(startTime, now())
 
@@ -205,16 +197,16 @@ class PaymentExternalSystemAdapterImpl(
 
             if (response.statusCode() in 200..299) {
                 logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-                return@coroutineScope PaymentResult(success = true, paymentSucceeded = body.result, message = body.message)
+                return PaymentResult(success = true, paymentSucceeded = body.result, message = body.message)
             }
 
-            return@coroutineScope PaymentResult(success = false, paymentSucceeded = false, message = "HTTP ${response.statusCode()}")
+            return PaymentResult(success = false, paymentSucceeded = false, message = "HTTP ${response.statusCode()}")
         } catch (_: HttpTimeoutException) {
-            return@coroutineScope PaymentResult(success = false, paymentSucceeded = false, message = "Request timeout")
+            return PaymentResult(success = false, paymentSucceeded = false, message = "Request timeout")
         } catch (_: HttpConnectTimeoutException) {
-            return@coroutineScope PaymentResult(success = false, paymentSucceeded = false, message = "Connection timeout")
+            return PaymentResult(success = false, paymentSucceeded = false, message = "Connection timeout")
         } catch (e: Exception) {
-            return@coroutineScope PaymentResult(success = false, paymentSucceeded = false, message = e.message ?: "Unknown error")
+            return PaymentResult(success = false, paymentSucceeded = false, message = e.message ?: "Unknown error")
         }
     }
 
