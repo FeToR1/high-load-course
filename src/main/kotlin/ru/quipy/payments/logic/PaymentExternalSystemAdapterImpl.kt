@@ -35,6 +35,7 @@ import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import kotlin.math.pow
 
 // Advice: always treat time as a Duration
@@ -242,25 +243,25 @@ class PaymentExternalSystemAdapterImpl(
             if (response.statusCode() in 200..299) {
                 logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
                 // Record success in circuit breaker
-                circuitBreaker.onSuccess(duration.toNanos(), duration.toMillis().toDouble())
+                circuitBreaker.onSuccess(duration.toNanos(), TimeUnit.NANOSECONDS)
                 return PaymentResult(success = true, paymentSucceeded = body.result, message = body.message)
             }
 
             // Record error for non-2xx responses (5xx errors)
             val error = Exception("HTTP ${response.statusCode()}")
-            circuitBreaker.onError(duration.toNanos(), duration.toMillis().toDouble(), error)
+            circuitBreaker.onError(duration.toNanos(), TimeUnit.NANOSECONDS, error)
             return PaymentResult(success = false, paymentSucceeded = false, message = "HTTP ${response.statusCode()}")
         } catch (e: HttpTimeoutException) {
             val duration = Duration.between(startTime, now())
-            circuitBreaker.onError(duration.toNanos(), duration.toMillis().toDouble(), e)
+            circuitBreaker.onError(duration.toNanos(), TimeUnit.NANOSECONDS, e)
             return PaymentResult(success = false, paymentSucceeded = false, message = "Request timeout")
         } catch (e: HttpConnectTimeoutException) {
             val duration = Duration.between(startTime, now())
-            circuitBreaker.onError(duration.toNanos(), duration.toMillis().toDouble(), e)
+            circuitBreaker.onError(duration.toNanos(), TimeUnit.NANOSECONDS, e)
             return PaymentResult(success = false, paymentSucceeded = false, message = "Connection timeout")
         } catch (e: Exception) {
             val duration = Duration.between(startTime, now())
-            circuitBreaker.onError(duration.toNanos(), duration.toMillis().toDouble(), e)
+            circuitBreaker.onError(duration.toNanos(), TimeUnit.NANOSECONDS, e)
             return PaymentResult(success = false, paymentSucceeded = false, message = e.message ?: "Unknown error")
         }
     }
