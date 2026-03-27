@@ -168,6 +168,18 @@ class PaymentExternalSystemAdapterImpl(
                 return
             }
 
+            // Логируем каждую попытку отправки запроса
+            // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования
+            dbScope.launch {
+                paymentESService.update(paymentId) {
+                    it.logSubmission(
+                        success = true,
+                        transactionId,
+                        now().toEpochMilli(),
+                        Duration.ofMillis(now().toEpochMilli() - paymentStartedAt))
+                }
+            }
+
             if (isCircuitBreakerOpen()) {
                 lastResult = PaymentResult(success = false, paymentSucceeded = false, message = "Circuit breaker is open", shouldRetry = false)
                 break
@@ -244,18 +256,6 @@ class PaymentExternalSystemAdapterImpl(
         if (!circuitBreaker.tryAcquirePermission()) {
             logger.warn("[$accountName] Circuit breaker is OPEN, rejecting request for payment $paymentId")
             return PaymentResult(success = false, paymentSucceeded = false, message = "Circuit breaker is open", shouldRetry = false)
-        }
-
-        // Логируем каждую попытку отправки запроса
-        // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования
-        dbScope.launch {
-            paymentESService.update(paymentId) {
-                it.logSubmission(
-                    success = true,
-                    transactionId,
-                    now().toEpochMilli(),
-                    Duration.ofMillis(now().toEpochMilli() - paymentStartedAt))
-            }
         }
 
         val startTime = now()
