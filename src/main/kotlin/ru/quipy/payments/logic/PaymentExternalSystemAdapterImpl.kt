@@ -2,6 +2,8 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.github.resilience4j.circuitbreaker.CircuitBreaker
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
 import kotlinx.coroutines.CoroutineScope
@@ -63,6 +65,30 @@ class PaymentExternalSystemAdapterImpl(
     private val accountName = properties.accountName
 
     private val httpClientExecutor = Executors.newFixedThreadPool(15)
+
+    private val circuitBreaker: CircuitBreaker by lazy {
+        val config = CircuitBreakerConfig.custom()
+            .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.TIME_BASED)
+            .slidingWindowSize(3) // 3 seconds window
+            .minimumNumberOfCalls(5)
+            .failureRateThreshold(25f)
+            .waitDurationInOpenState(Duration.ofSeconds(5))
+            .permittedNumberOfCallsInHalfOpenState(15)
+            .slowCallDurationThreshold(Duration.ofMillis(2 * averageProcessingTime().toMillis() + 200))
+            .build()
+
+        CircuitBreaker.of("payment-service-$accountName", config).apply {
+            eventPublisher.onSuccess { event ->
+                logger.debug("[$accountName] Circuit breaker recorded success")
+            }
+            eventPublisher.onError { event ->
+                logger.warn("[$accountName] Circuit breaker recorded error: ${event.throwable?.message}")
+            }
+            eventPublisher.onStateTransition { event ->
+                logger.warn("[$accountName] Circuit breaker state transition: ${event.stateTransition}")
+            }
+        }
+    }
 
     private val client: HttpClient by lazy {
         HttpClient.newBuilder()
@@ -189,9 +215,15 @@ class PaymentExternalSystemAdapterImpl(
         paymentId: UUID,
         transactionId: UUID
     ): PaymentResult {
-        try {
-            val startTime = now()
+        // Check if circuit breaker allows the request
+        if (!circuitBreaker.tryAcquirePermission()) {
+            logger.warn("[$accountName] Circuit breaker is OPEN, rejecting request for payment $paymentId")
+            return PaymentResult(success = false, paymentSucceeded = false, message = "Circuit breaker is open")
+        }
 
+        val startTime = now()
+        
+        try {
             val response = withContext(Dispatchers.IO) {
                 client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
             }
@@ -209,15 +241,26 @@ class PaymentExternalSystemAdapterImpl(
 
             if (response.statusCode() in 200..299) {
                 logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+                // Record success in circuit breaker
+                circuitBreaker.onSuccess(duration.toNanos(), duration.toMillis().toDouble())
                 return PaymentResult(success = true, paymentSucceeded = body.result, message = body.message)
             }
 
+            // Record error for non-2xx responses (5xx errors)
+            val error = Exception("HTTP ${response.statusCode()}")
+            circuitBreaker.onError(duration.toNanos(), duration.toMillis().toDouble(), error)
             return PaymentResult(success = false, paymentSucceeded = false, message = "HTTP ${response.statusCode()}")
-        } catch (_: HttpTimeoutException) {
+        } catch (e: HttpTimeoutException) {
+            val duration = Duration.between(startTime, now())
+            circuitBreaker.onError(duration.toNanos(), duration.toMillis().toDouble(), e)
             return PaymentResult(success = false, paymentSucceeded = false, message = "Request timeout")
-        } catch (_: HttpConnectTimeoutException) {
+        } catch (e: HttpConnectTimeoutException) {
+            val duration = Duration.between(startTime, now())
+            circuitBreaker.onError(duration.toNanos(), duration.toMillis().toDouble(), e)
             return PaymentResult(success = false, paymentSucceeded = false, message = "Connection timeout")
         } catch (e: Exception) {
+            val duration = Duration.between(startTime, now())
+            circuitBreaker.onError(duration.toNanos(), duration.toMillis().toDouble(), e)
             return PaymentResult(success = false, paymentSucceeded = false, message = e.message ?: "Unknown error")
         }
     }
