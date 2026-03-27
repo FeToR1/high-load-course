@@ -149,8 +149,8 @@ class PaymentExternalSystemAdapterImpl(
 
             rateLimiter.tickAsync()
             ongoingWindow.acquireAsync()
-            try {
-                val result = sendRequestReal(request, paymentId, transactionId)
+            val result = try {
+                sendRequestReal(request, paymentId, transactionId)
             } finally {
                 ongoingWindow.release()
             }
