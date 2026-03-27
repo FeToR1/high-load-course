@@ -70,12 +70,12 @@ class PaymentExternalSystemAdapterImpl(
     private val circuitBreaker: CircuitBreaker by lazy {
         val config = CircuitBreakerConfig.custom()
             .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.TIME_BASED)
-            .slidingWindowSize(3) // 3 seconds window
-            .minimumNumberOfCalls(5)
-            .failureRateThreshold(25f)
-            .waitDurationInOpenState(Duration.ofSeconds(5))
-            .permittedNumberOfCallsInHalfOpenState(15)
-            .slowCallDurationThreshold(Duration.ofMillis(2 * averageProcessingTime().toMillis() + 200))
+            .slidingWindowSize(3)
+            .minimumNumberOfCalls(3)
+            .failureRateThreshold(50f)
+            .waitDurationInOpenState(Duration.ofMillis(500))
+            .permittedNumberOfCallsInHalfOpenState(2)
+            .automaticTransitionFromOpenToHalfOpenEnabled(true)
             .build()
 
         CircuitBreaker.of("payment-service-$accountName", config).apply {
