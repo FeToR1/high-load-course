@@ -69,12 +69,12 @@ class PaymentExternalSystemAdapterImpl(
 
     private val circuitBreaker: CircuitBreaker by lazy {
         val config = CircuitBreakerConfig.custom()
-            .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.TIME_BASED)
-            .slidingWindowSize(3) // 3 seconds window
-            .minimumNumberOfCalls(2) // Минимум 2 вызова - открываем при первой возможности
-            .failureRateThreshold(30f) // 30% ошибок - очень чувствительно
-            .waitDurationInOpenState(Duration.ofSeconds(10)) // 200ms - очень быстрое восстановление
-            .permittedNumberOfCallsInHalfOpenState(1) // Только 1 тестовый запрос
+            .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
+            .slidingWindowSize(5) // Look at the last 5 calls
+            .minimumNumberOfCalls(2) // Minimum 2 calls - open at the first sign of trouble
+            .failureRateThreshold(30f) // 30% errors
+            .waitDurationInOpenState(Duration.ofSeconds(10)) 
+            .permittedNumberOfCallsInHalfOpenState(1) 
             .automaticTransitionFromOpenToHalfOpenEnabled(true)
             .build()
 
@@ -285,7 +285,7 @@ class PaymentExternalSystemAdapterImpl(
         } catch (e: HttpConnectTimeoutException) {
             val duration = Duration.between(startTime, now())
             circuitBreaker.onError(duration.toNanos(), TimeUnit.NANOSECONDS, e)
-            return PaymentResult(success = false, paymentSucceeded = false, message = "Connection timeout")
+            return PaymentResult(success = false, paymentSucceeded = false, message = "Connection timeout", shouldRetry = false)
         } catch (e: Exception) {
             val duration = Duration.between(startTime, now())
             circuitBreaker.onError(duration.toNanos(), TimeUnit.NANOSECONDS, e)
