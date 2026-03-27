@@ -166,18 +166,10 @@ class PaymentExternalSystemAdapterImpl(
                 delay(retryDelay.toMillis())
             }
 
-            // Логируем каждую попытку отправки запроса
-            // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования
-            dbScope.launch {
-                paymentESService.update(paymentId) {
-                    it.logSubmission(success = true, transactionId, now().toEpochMilli(), Duration.ofMillis(now().toEpochMilli() - paymentStartedAt))
-                }
-            }
-
             rateLimiter.tickAsync()
             ongoingWindow.acquireAsync()
             val result = try {
-                sendRequestReal(request, paymentId, transactionId)
+                sendRequestReal(request, paymentId, transactionId, paymentStartedAt)
             } finally {
                 ongoingWindow.release()
             }
@@ -214,12 +206,25 @@ class PaymentExternalSystemAdapterImpl(
     private suspend fun sendRequestReal(
         request: HttpRequest,
         paymentId: UUID,
-        transactionId: UUID
+        transactionId: UUID,
+        paymentStartedAt: Long
     ): PaymentResult {
         // Check if circuit breaker allows the request
         if (!circuitBreaker.tryAcquirePermission()) {
             logger.warn("[$accountName] Circuit breaker is OPEN, rejecting request for payment $paymentId")
             return PaymentResult(success = false, paymentSucceeded = false, message = "Circuit breaker is open")
+        }
+
+        // Логируем каждую попытку отправки запроса
+        // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования
+        dbScope.launch {
+            paymentESService.update(paymentId) {
+                it.logSubmission(
+                    success = true,
+                    transactionId,
+                    now().toEpochMilli(),
+                    Duration.ofMillis(now().toEpochMilli() - paymentStartedAt))
+            }
         }
 
         val startTime = now()
