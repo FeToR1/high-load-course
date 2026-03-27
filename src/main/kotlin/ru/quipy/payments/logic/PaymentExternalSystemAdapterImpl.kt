@@ -125,11 +125,6 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             if (now().plus(retryDelay) > deadline) {
-                dbScope.launch {
-                    paymentESService.update(paymentId) {
-                        it.logSubmission(success = true, transactionId, now().toEpochMilli(), Duration.ofMillis(now().toEpochMilli() - paymentStartedAt))
-                    }
-                }
                 logPaymentResult(paymentId, transactionId, false, "Deadline exceeded")
                 monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
                 return
