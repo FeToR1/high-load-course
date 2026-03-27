@@ -143,6 +143,8 @@ class PaymentExternalSystemAdapterImpl(
     ) {
         var lastResult: PaymentResult? = null
 
+        fun isCircuitBreakerOpen() = circuitBreaker.state == CircuitBreaker.State.OPEN
+
         for (attempt in 1..MAX_ATTEMPTS) {
             val retryNumber = attempt - 1
             val retryDelay = calculateDelay(retryNumber)
@@ -162,11 +164,27 @@ class PaymentExternalSystemAdapterImpl(
                 return
             }
 
+            if (isCircuitBreakerOpen()) {
+                lastResult = PaymentResult(success = false, paymentSucceeded = false, message = "Circuit breaker is open", shouldRetry = false)
+                break
+            }
+
             if (retryDelay > Duration.ZERO) {
                 delay(retryDelay.toMillis())
             }
 
             rateLimiter.tickAsync()
+
+            if (isCircuitBreakerOpen()) {
+                lastResult = PaymentResult(success = false, paymentSucceeded = false, message = "Circuit breaker is open", shouldRetry = false)
+                break
+            }
+            
+            if (now() > deadline) {
+                lastResult = PaymentResult(success = false, paymentSucceeded = false, message = "Deadline exceeded while waiting in queue", shouldRetry = false)
+                break
+            }
+
             ongoingWindow.acquireAsync()
             val result = try {
                 sendRequestReal(request, paymentId, transactionId, paymentStartedAt)
