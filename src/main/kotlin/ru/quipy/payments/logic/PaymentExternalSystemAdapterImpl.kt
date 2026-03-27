@@ -54,8 +54,8 @@ class PaymentExternalSystemAdapterImpl(
 
         const val RETRY_DELAY_BASE = 2.0
         const val RETRY_DELAY_COEFF = 50
-        const val MAX_DELAY_MS = 10L
-        const val MAX_RETRIES = 2
+        const val MAX_DELAY_MS = 100000000L
+        const val MAX_RETRIES = 4
         const val MAX_ATTEMPTS = MAX_RETRIES + 1
     }
 
@@ -149,8 +149,8 @@ class PaymentExternalSystemAdapterImpl(
 
             rateLimiter.tickAsync()
             ongoingWindow.acquireAsync()
-            try {
-                val result = sendRequestReal(request, paymentId, transactionId)
+            val result = try {
+                sendRequestReal(request, paymentId, transactionId)
             } finally {
                 ongoingWindow.release()
             }
