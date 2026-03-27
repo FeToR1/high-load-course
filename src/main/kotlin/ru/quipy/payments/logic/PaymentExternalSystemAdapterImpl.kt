@@ -100,8 +100,8 @@ class PaymentExternalSystemAdapterImpl(
 
         select {
             async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
-            async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
-            async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
+            // async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
+            // async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
         }
 
         coroutineContext.cancelChildren()
