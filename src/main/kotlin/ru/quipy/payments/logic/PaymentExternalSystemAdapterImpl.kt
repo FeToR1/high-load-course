@@ -73,7 +73,7 @@ class PaymentExternalSystemAdapterImpl(
             .slidingWindowSize(3) // 3 seconds window
             .minimumNumberOfCalls(2) // Минимум 2 вызова - открываем при первой возможности
             .failureRateThreshold(30f) // 30% ошибок - очень чувствительно
-            .waitDurationInOpenState(Duration.ofMillis(200)) // 200ms - очень быстрое восстановление
+            .waitDurationInOpenState(Duration.ofMillis(800)) // 200ms - очень быстрое восстановление
             .permittedNumberOfCallsInHalfOpenState(1) // Только 1 тестовый запрос
             .automaticTransitionFromOpenToHalfOpenEnabled(true)
             .build()
@@ -182,6 +182,10 @@ class PaymentExternalSystemAdapterImpl(
                 monitoringService.increaseRequestsCounter(requestType)
                 return
             }
+
+            if (!result.shouldRetry) {
+                break
+            }
         }
 
         // All attempts failed
@@ -212,7 +216,7 @@ class PaymentExternalSystemAdapterImpl(
         // Check if circuit breaker allows the request
         if (!circuitBreaker.tryAcquirePermission()) {
             logger.warn("[$accountName] Circuit breaker is OPEN, rejecting request for payment $paymentId")
-            return PaymentResult(success = false, paymentSucceeded = false, message = "Circuit breaker is open")
+            return PaymentResult(success = false, paymentSucceeded = false, message = "Circuit breaker is open", shouldRetry = false)
         }
 
         // Логируем каждую попытку отправки запроса
@@ -296,7 +300,8 @@ class PaymentExternalSystemAdapterImpl(
 data class PaymentResult(
     val success: Boolean,
     val paymentSucceeded: Boolean,
-    val message: String?
+    val message: String?,
+    val shouldRetry: Boolean = true
 )
 
 fun now() = Instant.now()
