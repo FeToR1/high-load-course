@@ -70,7 +70,7 @@ class PaymentExternalSystemAdapterImpl(
     private val circuitBreaker: CircuitBreaker by lazy {
         val config = CircuitBreakerConfig.custom()
             .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
-            .slidingWindowSize(3) // Look at the last 3 calls
+            .slidingWindowSize(1) // Look at the last 3 calls
             .minimumNumberOfCalls(1) // Minimum 1 calls - open at the first sign of trouble
             .failureRateThreshold(30f) // 30% errors
             .waitDurationInOpenState(Duration.ofSeconds(15)) 
@@ -175,6 +175,11 @@ class PaymentExternalSystemAdapterImpl(
 
             if (retryDelay > Duration.ZERO) {
                 delay(retryDelay.toMillis())
+            }
+
+            if (isCircuitBreakerOpen()) {
+                lastResult = PaymentResult(success = false, paymentSucceeded = false, message = "Circuit breaker is open", shouldRetry = false)
+                break
             }
 
             rateLimiter.tickAsync()
