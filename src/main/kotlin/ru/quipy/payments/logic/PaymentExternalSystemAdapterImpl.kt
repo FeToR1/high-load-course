@@ -59,7 +59,7 @@ class PaymentExternalSystemAdapterImpl(
         const val RETRY_DELAY_BASE = 2.0
         const val RETRY_DELAY_COEFF = 50
         const val MAX_DELAY_MS = 100000000L
-        const val MAX_RETRIES = 4
+        const val MAX_RETRIES = 4444
         const val MAX_ATTEMPTS = MAX_RETRIES + 1
     }
 
@@ -168,8 +168,8 @@ class PaymentExternalSystemAdapterImpl(
                 delay(100) // Suspend briefly, then check again
             }
 
-            val retryNumber = attempt - 1
-            val retryDelay = calculateDelay(retryNumber)
+            val retryNumber = 0
+            val retryDelay = Duration.ZERO
 
             if (retryNumber > 0) {
                 monitoringService.increaseRetryCounter()
