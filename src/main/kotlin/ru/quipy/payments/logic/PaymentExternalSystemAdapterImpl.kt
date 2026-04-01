@@ -36,6 +36,7 @@ import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.pow
 
 // Advice: always treat time as a Duration
@@ -296,6 +297,8 @@ class PaymentExternalSystemAdapterImpl(
             circuitBreaker.onError(duration.toNanos(), TimeUnit.NANOSECONDS, e)
             return PaymentResult(success = false, paymentSucceeded = false, message = "Connection timeout", shouldRetry = false)
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
+
             val duration = Duration.between(startTime, now())
             circuitBreaker.onError(duration.toNanos(), TimeUnit.NANOSECONDS, e)
             return PaymentResult(success = false, paymentSucceeded = false, message = e.message ?: "Unknown error")
