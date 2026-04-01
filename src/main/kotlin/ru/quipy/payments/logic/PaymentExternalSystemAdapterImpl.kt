@@ -74,7 +74,7 @@ class PaymentExternalSystemAdapterImpl(
             .slidingWindowSize(1) // Look at the last 3 calls
             .minimumNumberOfCalls(1) // Minimum 1 calls - open at the first sign of trouble
             .failureRateThreshold(30f) // 30% errors
-            .waitDurationInOpenState(Duration.ofSeconds(61)) 
+            .waitDurationInOpenState(Duration.ofSeconds(5))
             .permittedNumberOfCallsInHalfOpenState(1) 
             .automaticTransitionFromOpenToHalfOpenEnabled(true)
             .build()
