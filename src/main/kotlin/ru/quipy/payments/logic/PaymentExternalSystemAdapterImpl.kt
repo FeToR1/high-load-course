@@ -159,8 +159,13 @@ class PaymentExternalSystemAdapterImpl(
                 }
             }
 
-            if (isCircuitBreakerOpen()) {
-                break
+            while (circuitBreaker.state == CircuitBreaker.State.OPEN) {
+                if (now() > deadline) {
+                    logPaymentResult(paymentId, transactionId, false, "Deadline exceeded while waiting for circuit breaker to close")
+                    monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
+                    return
+                }
+                delay(100) // Suspend briefly, then check again
             }
 
             val retryNumber = attempt - 1
@@ -181,26 +186,11 @@ class PaymentExternalSystemAdapterImpl(
                 return
             }
 
-            if (isCircuitBreakerOpen()) {
-                lastResult = PaymentResult(success = false, paymentSucceeded = false, message = "Circuit breaker is open", shouldRetry = false)
-                break
-            }
-
             if (retryDelay > Duration.ZERO) {
                 delay(retryDelay.toMillis())
             }
 
-            if (isCircuitBreakerOpen()) {
-                lastResult = PaymentResult(success = false, paymentSucceeded = false, message = "Circuit breaker is open", shouldRetry = false)
-                break
-            }
-
             rateLimiter.tickAsync()
-
-            if (isCircuitBreakerOpen()) {
-                lastResult = PaymentResult(success = false, paymentSucceeded = false, message = "Circuit breaker is open", shouldRetry = false)
-                break
-            }
             
             if (now() > deadline) {
                 lastResult = PaymentResult(success = false, paymentSucceeded = false, message = "Deadline exceeded while waiting in queue", shouldRetry = false)
@@ -256,7 +246,7 @@ class PaymentExternalSystemAdapterImpl(
         // Check if circuit breaker allows the request
         if (!circuitBreaker.tryAcquirePermission()) {
             logger.warn("[$accountName] Circuit breaker is OPEN, rejecting request for payment $paymentId")
-            return PaymentResult(success = false, paymentSucceeded = false, message = "Circuit breaker is open", shouldRetry = false)
+            return PaymentResult(success = false, paymentSucceeded = false, message = "Circuit breaker is open")
         }
 
         val startTime = now()
