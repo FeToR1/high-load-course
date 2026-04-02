@@ -2,6 +2,8 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.github.resilience4j.circuitbreaker.CircuitBreaker
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.Metrics
 import kotlinx.coroutines.CoroutineScope
@@ -33,6 +35,8 @@ import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.pow
 
 // Advice: always treat time as a Duration
@@ -54,8 +58,8 @@ class PaymentExternalSystemAdapterImpl(
 
         const val RETRY_DELAY_BASE = 2.0
         const val RETRY_DELAY_COEFF = 50
-        const val MAX_DELAY_MS = 10L
-        const val MAX_RETRIES = 2
+        const val MAX_DELAY_MS = 100000000L
+        const val MAX_RETRIES = 4444
         const val MAX_ATTEMPTS = MAX_RETRIES + 1
     }
 
@@ -63,6 +67,30 @@ class PaymentExternalSystemAdapterImpl(
     private val accountName = properties.accountName
 
     private val httpClientExecutor = Executors.newFixedThreadPool(15)
+
+    private val circuitBreaker: CircuitBreaker by lazy {
+        val config = CircuitBreakerConfig.custom()
+            .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
+            .slidingWindowSize(3) // Look at the last 3 calls
+            .minimumNumberOfCalls(1) // Minimum 1 calls - open at the first sign of trouble
+            .failureRateThreshold(30f) // 30% errors
+            .waitDurationInOpenState(Duration.ofSeconds(15))
+            .permittedNumberOfCallsInHalfOpenState(1) 
+            .automaticTransitionFromOpenToHalfOpenEnabled(true)
+            .build()
+
+        CircuitBreaker.of("payment-service-$accountName", config).apply {
+            eventPublisher.onSuccess { event ->
+                logger.debug("[$accountName] Circuit breaker recorded success")
+            }
+            eventPublisher.onError { event ->
+                logger.warn("[$accountName] Circuit breaker recorded error: ${event.throwable?.message}")
+            }
+            eventPublisher.onStateTransition { event ->
+                logger.warn("[$accountName] Circuit breaker state transition: ${event.stateTransition}")
+            }
+        }
+    }
 
     private val client: HttpClient by lazy {
         HttpClient.newBuilder()
@@ -100,8 +128,8 @@ class PaymentExternalSystemAdapterImpl(
 
         select {
             async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
-            async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
-            async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
+            // async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
+            // async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
         }
 
         coroutineContext.cancelChildren()
@@ -116,9 +144,32 @@ class PaymentExternalSystemAdapterImpl(
     ) {
         var lastResult: PaymentResult? = null
 
+        fun isCircuitBreakerOpen() = circuitBreaker.state == CircuitBreaker.State.OPEN
+
         for (attempt in 1..MAX_ATTEMPTS) {
-            val retryNumber = attempt - 1
-            val retryDelay = calculateDelay(retryNumber)
+            // Логируем каждую попытку отправки запроса
+            // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования
+            dbScope.launch {
+                paymentESService.update(paymentId) {
+                    it.logSubmission(
+                        success = true,
+                        transactionId,
+                        now().toEpochMilli(),
+                        Duration.ofMillis(now().toEpochMilli() - paymentStartedAt))
+                }
+            }
+
+            while (circuitBreaker.state == CircuitBreaker.State.OPEN) {
+                if (now() > deadline) {
+                    logPaymentResult(paymentId, transactionId, false, "Deadline exceeded while waiting for circuit breaker to close")
+                    monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
+                    return
+                }
+                delay(100) // Suspend briefly, then check again
+            }
+
+            val retryNumber = 0
+            val retryDelay = Duration.ZERO
 
             if (retryNumber > 0) {
                 monitoringService.increaseRetryCounter()
@@ -134,18 +185,16 @@ class PaymentExternalSystemAdapterImpl(
                 delay(retryDelay.toMillis())
             }
 
-            // Логируем каждую попытку отправки запроса
-            // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования
-            dbScope.launch {
-                paymentESService.update(paymentId) {
-                    it.logSubmission(success = true, transactionId, now().toEpochMilli(), Duration.ofMillis(now().toEpochMilli() - paymentStartedAt))
-                }
+            rateLimiter.tickAsync()
+            
+            if (now() > deadline) {
+                lastResult = PaymentResult(success = false, paymentSucceeded = false, message = "Deadline exceeded while waiting in queue", shouldRetry = false)
+                break
             }
 
-            rateLimiter.tickAsync()
             ongoingWindow.acquireAsync()
             val result = try {
-                sendRequestReal(request, paymentId, transactionId)
+                sendRequestReal(request, paymentId, transactionId, paymentStartedAt)
             } finally {
                 ongoingWindow.release()
             }
@@ -157,6 +206,10 @@ class PaymentExternalSystemAdapterImpl(
                 val requestType = if (result.paymentSucceeded) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
                 monitoringService.increaseRequestsCounter(requestType)
                 return
+            }
+
+            if (!result.shouldRetry) {
+                break
             }
         }
 
@@ -182,11 +235,18 @@ class PaymentExternalSystemAdapterImpl(
     private suspend fun sendRequestReal(
         request: HttpRequest,
         paymentId: UUID,
-        transactionId: UUID
+        transactionId: UUID,
+        paymentStartedAt: Long
     ): PaymentResult {
-        try {
-            val startTime = now()
+        // Check if circuit breaker allows the request
+        if (!circuitBreaker.tryAcquirePermission()) {
+            logger.warn("[$accountName] Circuit breaker is OPEN, rejecting request for payment $paymentId")
+            return PaymentResult(success = false, paymentSucceeded = false, message = "Circuit breaker is open")
+        }
 
+        val startTime = now()
+        
+        try {
             val response = withContext(Dispatchers.IO) {
                 client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
             }
@@ -204,15 +264,28 @@ class PaymentExternalSystemAdapterImpl(
 
             if (response.statusCode() in 200..299) {
                 logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+                // Record success in circuit breaker
+                circuitBreaker.onSuccess(duration.toNanos(), TimeUnit.NANOSECONDS)
                 return PaymentResult(success = true, paymentSucceeded = body.result, message = body.message)
             }
 
+            // Record error for non-2xx responses (5xx errors)
+            val error = Exception("HTTP ${response.statusCode()}")
+            circuitBreaker.onError(duration.toNanos(), TimeUnit.NANOSECONDS, error)
             return PaymentResult(success = false, paymentSucceeded = false, message = "HTTP ${response.statusCode()}")
-        } catch (_: HttpTimeoutException) {
+        } catch (e: HttpTimeoutException) {
+            val duration = Duration.between(startTime, now())
+            circuitBreaker.onError(duration.toNanos(), TimeUnit.NANOSECONDS, e)
             return PaymentResult(success = false, paymentSucceeded = false, message = "Request timeout")
-        } catch (_: HttpConnectTimeoutException) {
-            return PaymentResult(success = false, paymentSucceeded = false, message = "Connection timeout")
+        } catch (e: HttpConnectTimeoutException) {
+            val duration = Duration.between(startTime, now())
+            circuitBreaker.onError(duration.toNanos(), TimeUnit.NANOSECONDS, e)
+            return PaymentResult(success = false, paymentSucceeded = false, message = "Connection timeout", shouldRetry = false)
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
+
+            val duration = Duration.between(startTime, now())
+            circuitBreaker.onError(duration.toNanos(), TimeUnit.NANOSECONDS, e)
             return PaymentResult(success = false, paymentSucceeded = false, message = e.message ?: "Unknown error")
         }
     }
@@ -242,7 +315,8 @@ class PaymentExternalSystemAdapterImpl(
 data class PaymentResult(
     val success: Boolean,
     val paymentSucceeded: Boolean,
-    val message: String?
+    val message: String?,
+    val shouldRetry: Boolean = true
 )
 
 fun now() = Instant.now()

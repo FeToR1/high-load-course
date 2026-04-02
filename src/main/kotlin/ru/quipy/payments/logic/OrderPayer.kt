@@ -58,7 +58,7 @@ class OrderPayer(
         val createdAt = System.currentTimeMillis()
 
         if (paymentExecutor.queue.remainingCapacity() == 0) {
-            throw RateLimitExceededException(processTime * 5)
+            throw RateLimitExceededException(2000)
         }
 
         executorScope.launch {
