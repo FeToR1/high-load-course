@@ -62,6 +62,8 @@ class PaymentExternalSystemAdapterImpl(
         const val MAX_DELAY_MS = 100000000L
         const val MAX_RETRIES = 9
         const val MAX_ATTEMPTS = MAX_RETRIES + 1
+
+        const val NETWORKING_DELAY_MILLIS = 200L
     }
 
     private val serviceName = properties.serviceName
@@ -69,13 +71,16 @@ class PaymentExternalSystemAdapterImpl(
 
     private val httpClientExecutor = Executors.newFixedThreadPool(15)
 
+    private val expectedProcessingTime =
+        averageProcessingTime().multipliedBy(2) + Duration.ofMillis(NETWORKING_DELAY_MILLIS)
+
     private val circuitBreaker: CircuitBreaker by lazy {
         val config = CircuitBreakerConfig.custom()
             .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.TIME_BASED)
             .slidingWindowSize(5) // seconds
             .failureRateThreshold(25f)
             .slowCallRateThreshold(75f)
-            //.slowCallDurationThreshold(Duration.ofMillis(expectedProcessingTimeMillis))
+            .slowCallDurationThreshold(Duration.ofMillis(expectedProcessingTime.toMillis()))
             .waitDurationInOpenState(Duration.ofMillis(5_000))
             .permittedNumberOfCallsInHalfOpenState(15)
             .recordExceptions(IOException::class.java, InterruptedException::class.java)
@@ -149,7 +154,8 @@ class PaymentExternalSystemAdapterImpl(
                         success = true,
                         transactionId,
                         now().toEpochMilli(),
-                        Duration.ofMillis(now().toEpochMilli() - paymentStartedAt))
+                        Duration.ofMillis(now().toEpochMilli() - paymentStartedAt)
+                    )
                 }
             }
 
@@ -163,7 +169,12 @@ class PaymentExternalSystemAdapterImpl(
             if (now().plus(retryDelay) > deadline) {
                 dbScope.launch {
                     paymentESService.update(paymentId) {
-                        it.logSubmission(success = true, transactionId, now().toEpochMilli(), Duration.ofMillis(now().toEpochMilli() - paymentStartedAt))
+                        it.logSubmission(
+                            success = true,
+                            transactionId,
+                            now().toEpochMilli(),
+                            Duration.ofMillis(now().toEpochMilli() - paymentStartedAt)
+                        )
                     }
                 }
                 logPaymentResult(paymentId, transactionId, false, "Deadline exceeded")
@@ -175,18 +186,33 @@ class PaymentExternalSystemAdapterImpl(
                 delay(retryDelay.toMillis())
             }
 
+            while (!circuitBreaker.tryAcquirePermission()) {
+                if (now() > deadline) {
+                    logPaymentResult(
+                        paymentId,
+                        transactionId,
+                        false,
+                        "Deadline exceeded while waiting for circuit breaker to close"
+                    )
+                    monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
+                    return
+                }
+                delay(10)
+            }
+
             rateLimiter.tickAsync()
-            
+
             if (now() > deadline) {
-                lastResult = PaymentResult(success = false, paymentSucceeded = false, message = "Deadline exceeded while waiting in queue", shouldRetry = false)
+                lastResult = PaymentResult(
+                    success = false,
+                    paymentSucceeded = false,
+                    message = "Deadline exceeded while waiting in queue",
+                    shouldRetry = false
+                )
                 break
             }
 
             ongoingWindow.acquireAsync()
-
-            if (!circuitBreaker.tryAcquirePermission()) {
-                continue
-            }
 
             val result = try {
                 sendRequestReal(request, paymentId, transactionId, paymentStartedAt)
@@ -198,7 +224,8 @@ class PaymentExternalSystemAdapterImpl(
 
             if (result.success) {
                 logPaymentResult(paymentId, transactionId, result.paymentSucceeded, result.message)
-                val requestType = if (result.paymentSucceeded) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
+                val requestType =
+                    if (result.paymentSucceeded) RequestType.PROCESSED_SUCCESS else RequestType.PROCESSED_FAIL
                 monitoringService.increaseRequestsCounter(requestType)
                 return
             }
@@ -233,8 +260,17 @@ class PaymentExternalSystemAdapterImpl(
         transactionId: UUID,
         paymentStartedAt: Long
     ): PaymentResult {
+        if (circuitBreaker.state == CircuitBreaker.State.OPEN) {
+            return PaymentResult(
+                success = false,
+                paymentSucceeded = false,
+                message = "Circuit breaker is open",
+                shouldRetry = true
+            )
+        }
+
         val startTime = now()
-        
+
         try {
             val response = withContext(Dispatchers.IO) {
                 client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
@@ -269,7 +305,12 @@ class PaymentExternalSystemAdapterImpl(
         } catch (e: HttpConnectTimeoutException) {
             val duration = Duration.between(startTime, now())
             circuitBreaker.onError(duration.toNanos(), TimeUnit.NANOSECONDS, e)
-            return PaymentResult(success = false, paymentSucceeded = false, message = "Connection timeout", shouldRetry = false)
+            return PaymentResult(
+                success = false,
+                paymentSucceeded = false,
+                message = "Connection timeout",
+                shouldRetry = false
+            )
         } catch (e: Exception) {
             if (e is CancellationException) throw e
 
