@@ -186,20 +186,6 @@ class PaymentExternalSystemAdapterImpl(
                 delay(retryDelay.toMillis())
             }
 
-            while (!circuitBreaker.tryAcquirePermission()) {
-                if (now() > deadline) {
-                    logPaymentResult(
-                        paymentId,
-                        transactionId,
-                        false,
-                        "Deadline exceeded while waiting for circuit breaker to close"
-                    )
-                    monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
-                    return
-                }
-                delay(10)
-            }
-
             rateLimiter.tickAsync()
 
             if (now() > deadline) {
@@ -213,6 +199,10 @@ class PaymentExternalSystemAdapterImpl(
             }
 
             ongoingWindow.acquireAsync()
+
+            if (!circuitBreaker.tryAcquirePermission()) {
+                continue
+            }
 
             val result = try {
                 sendRequestReal(request, paymentId, transactionId, paymentStartedAt)
