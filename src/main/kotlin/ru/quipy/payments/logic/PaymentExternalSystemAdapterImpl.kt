@@ -237,12 +237,6 @@ class PaymentExternalSystemAdapterImpl(
         transactionId: UUID,
         paymentStartedAt: Long
     ): PaymentResult {
-        // Check if circuit breaker allows the request
-        if (!circuitBreaker.tryAcquirePermission()) {
-            logger.warn("[$accountName] Circuit breaker is OPEN, rejecting request for payment $paymentId")
-            return PaymentResult(success = false, paymentSucceeded = false, message = "Circuit breaker is open")
-        }
-
         val startTime = now()
         
         try {
