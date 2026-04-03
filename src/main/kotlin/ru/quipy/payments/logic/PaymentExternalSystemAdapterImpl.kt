@@ -60,7 +60,7 @@ class PaymentExternalSystemAdapterImpl(
         const val RETRY_DELAY_BASE = 2.0
         const val RETRY_DELAY_COEFF = 50
         const val MAX_DELAY_MS = 100000000L
-        const val MAX_RETRIES = 4444
+        const val MAX_RETRIES = 9
         const val MAX_ATTEMPTS = MAX_RETRIES + 1
     }
 
@@ -184,15 +184,9 @@ class PaymentExternalSystemAdapterImpl(
 
             ongoingWindow.acquireAsync()
 
-            while (!circuitBreaker.tryAcquirePermission()) {
-                if (now() > deadline) {
-                    logPaymentResult(paymentId, transactionId, false, "Deadline exceeded while waiting for circuit breaker to close")
-                    monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
-                    return
-                }
-                delay(10)
+            if (!circuitBreaker.tryAcquirePermission()) {
+                continue
             }
-
 
             val result = try {
                 sendRequestReal(request, paymentId, transactionId, paymentStartedAt)
