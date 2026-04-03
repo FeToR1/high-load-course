@@ -24,6 +24,7 @@ import ru.quipy.core.EventSourcingService
 import ru.quipy.monitoring.MonitoringService
 import ru.quipy.monitoring.RequestType
 import ru.quipy.payments.api.PaymentAggregate
+import java.io.IOException
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpConnectTimeoutException
@@ -70,13 +71,14 @@ class PaymentExternalSystemAdapterImpl(
 
     private val circuitBreaker: CircuitBreaker by lazy {
         val config = CircuitBreakerConfig.custom()
-            .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
-            .slidingWindowSize(3) // Look at the last 3 calls
-            .minimumNumberOfCalls(1) // Minimum 1 calls - open at the first sign of trouble
-            .failureRateThreshold(30f) // 30% errors
-            .waitDurationInOpenState(Duration.ofSeconds(15))
-            .permittedNumberOfCallsInHalfOpenState(1) 
-            .automaticTransitionFromOpenToHalfOpenEnabled(true)
+            .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.TIME_BASED)
+            .slidingWindowSize(5) // seconds
+            .failureRateThreshold(25f)
+            .slowCallRateThreshold(75f)
+            //.slowCallDurationThreshold(Duration.ofMillis(expectedProcessingTimeMillis))
+            .waitDurationInOpenState(Duration.ofMillis(5_000))
+            .permittedNumberOfCallsInHalfOpenState(15)
+            .recordExceptions(IOException::class.java, InterruptedException::class.java)
             .build()
 
         CircuitBreaker.of("payment-service-$accountName", config).apply {
@@ -126,13 +128,7 @@ class PaymentExternalSystemAdapterImpl(
             .header("x-idempotency-key", "$transactionId")
             .build()
 
-        select {
-            async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
-            // async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
-            // async { sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt) }.onAwait {}
-        }
-
-        coroutineContext.cancelChildren()
+        sendRequest(request, paymentId, transactionId, deadline, paymentStartedAt)
     }
 
     suspend fun sendRequest(
@@ -143,8 +139,6 @@ class PaymentExternalSystemAdapterImpl(
         paymentStartedAt: Long
     ) {
         var lastResult: PaymentResult? = null
-
-        fun isCircuitBreakerOpen() = circuitBreaker.state == CircuitBreaker.State.OPEN
 
         for (attempt in 1..MAX_ATTEMPTS) {
             // Логируем каждую попытку отправки запроса
@@ -159,13 +153,13 @@ class PaymentExternalSystemAdapterImpl(
                 }
             }
 
-            while (circuitBreaker.state == CircuitBreaker.State.OPEN) {
+            while (!circuitBreaker.tryAcquirePermission()) {
                 if (now() > deadline) {
                     logPaymentResult(paymentId, transactionId, false, "Deadline exceeded while waiting for circuit breaker to close")
                     monitoringService.increaseRequestsCounter(RequestType.PROCESSED_FAIL)
                     return
                 }
-                delay(100) // Suspend briefly, then check again
+                delay(10)
             }
 
             val retryNumber = 0
